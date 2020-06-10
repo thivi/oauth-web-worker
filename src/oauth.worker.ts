@@ -179,6 +179,10 @@ class OAuthWorker {
 		};
 	}
 
+	setPkceCodeVerifier(pkce: string) {
+		this.pkceCodeVerifier = pkce;
+	}
+
 	private validateIdToken(clientID: string, idToken: string, serverOrigin: string): Promise<any> {
 		const jwksEndpoint = this.jwksUri;
 
@@ -208,7 +212,6 @@ class OAuthWorker {
 					this.getAuthenticatedUser(idToken).username
 				);
 
-				console.log(validity);
 				return Promise.resolve(validity);
 			})
 			.catch((error) => {
@@ -375,13 +378,21 @@ class OAuthWorker {
 				})
 				.catch((error) => {
 					if (error.response && error.response.status === 400) {
-						return Promise.resolve({ type: AUTH_REQUIRED, code: this.sendAuthorizationRequest() });
+						return Promise.resolve({
+							type: AUTH_REQUIRED,
+							code: this.sendAuthorizationRequest(),
+							pkce: this.pkceCodeVerifier,
+						});
 					}
 
 					return Promise.reject(error);
 				});
 		} else {
-			return Promise.resolve({ type: AUTH_REQUIRED, code: this.sendAuthorizationRequest() });
+			return Promise.resolve({
+				type: AUTH_REQUIRED,
+				code: this.sendAuthorizationRequest(),
+				pkce: this.pkceCodeVerifier,
+			});
 		}
 	}
 
@@ -405,7 +416,7 @@ class OAuthWorker {
 						new Error("Invalid status code received in the refresh token response: " + response.status)
 					);
 				}
-				console.log("sendRefresh", response);
+
 				return this.validateIdToken(this.clientID, response.data.id_token, this.serverOrigin).then((valid) => {
 					if (valid) {
 						const tokenResponse: TokenResponseInterface = {
@@ -522,7 +533,6 @@ class OAuthWorker {
 		return new Promise((resolve, reject) => {
 			this.sendRefreshTokenRequest()
 				.then((response) => {
-					console.log("regresh",response)
 					this.initUserSession(response, this.getAuthenticatedUser(response.idToken));
 					resolve(true);
 				})
@@ -625,7 +635,7 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 								} else {
 									port.postMessage({
 										success: true,
-										data: { type: AUTH_REQUIRED, code: response.code },
+										data: { type: AUTH_REQUIRED, code: response.code, pkce: response.pkce },
 									});
 								}
 							})
@@ -639,18 +649,32 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 			}
 			break;
 		case AUTH_CODE:
-			oAuthWorker.setAuthorizationCode(data.data);
+			oAuthWorker.setAuthorizationCode(data.data.code);
+
+			if (data.data.pkce) {
+				oAuthWorker.setPkceCodeVerifier(data.data.pkce);
+			}
 			oAuthWorker
-				.sendSignInRequest()
-				.then((response: SignInResponse) => {
-					if (response.type === SIGNED_IN) {
-						port.postMessage({ success: true, data: { type: SIGNED_IN } });
-					} else {
-						port.postMessage({ success: true, data: { type: AUTH_REQUIRED, code: response.code } });
-					}
+				.initOPConfiguration()
+				.then(() => {
+					oAuthWorker
+						.sendSignInRequest()
+						.then((response: SignInResponse) => {
+							if (response.type === SIGNED_IN) {
+								port.postMessage({ success: true, data: { type: SIGNED_IN } });
+							} else {
+								port.postMessage({
+									success: true,
+									data: { type: AUTH_REQUIRED, code: response.code, pkce: response.pkce },
+								});
+							}
+						})
+						.catch((error) => {
+							port.postMessage({ success: false, error: error });
+						});
 				})
 				.catch((error) => {
-					port.postMessage({ success: false, error: error });
+					port.postMessage({ sucess: false, error: error });
 				});
 			break;
 		case API_CALL:
