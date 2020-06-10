@@ -36,6 +36,8 @@ export class OAuth {
 				},
 			};
 
+			history.pushState({}, document.title, this.removeAuthorizationCode());
+
 			sessionStorage.removeItem(PKCE_CODE_VERIFIER);
 
 			return this.communicate<AuthCode, SignInResponse>(message)
@@ -55,8 +57,6 @@ export class OAuth {
 		} else {
 			return Promise.reject("No Authorization Code found.");
 		}
-
-
 	}
 
 	public initialize(config: ConfigInterface): Promise<boolean> {
@@ -80,6 +80,11 @@ export class OAuth {
 		}
 
 		return null;
+	}
+
+	private removeAuthorizationCode(): string {
+		const url = location.href;
+		return url.replace(/\?code=.*$/, "");
 	}
 
 	private hasAuthorizationCode(): boolean {
