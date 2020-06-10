@@ -1,9 +1,9 @@
-import { Message, ResponseMessage, SignInResponse } from "./models/message";
+import { Message, ResponseMessage, SignInResponse, AuthCode } from "./models/message";
 // @ts-ignore
 import WorkerFile from "./oauth.worker.ts";
 import { ConfigInterface } from "./models/client";
 import { INIT, SIGN_IN, SIGNED_IN, AUTH_CODE, LOGOUT, SWITCH_ACCOUNTS, API_CALL } from "./constants";
-import { AUTHORIZATION_CODE } from "./constants/token";
+import { AUTHORIZATION_CODE, PKCE_CODE_VERIFIER } from "./constants/token";
 import { AccountSwitchRequestParams } from "./models";
 import { AxiosRequestConfig, AxiosResponse } from "axios";
 
@@ -25,12 +25,38 @@ export class OAuth {
 		}
 	}
 
-	public listenForAuthCode() {
+	public listenForAuthCode(): Promise<boolean> {
 		if (this.hasAuthorizationCode()) {
 			const authCode = this.getAuthorizationCode();
-			opener.postMessage(authCode);
-			close();
+			const message: Message<AuthCode> = {
+				type: AUTH_CODE,
+				data: {
+					code: authCode,
+					pkce: sessionStorage.getItem(PKCE_CODE_VERIFIER),
+				},
+			};
+
+			sessionStorage.removeItem(PKCE_CODE_VERIFIER);
+
+			return this.communicate<AuthCode, SignInResponse>(message)
+				.then((response) => {
+					if (response.type === SIGNED_IN) {
+						return Promise.resolve(true);
+					}
+
+					return Promise.reject(
+						"Something went wrong during authentication. " +
+							"Failed during signing in after getting the authorization code."
+					);
+				})
+				.catch((error) => {
+					return Promise.reject(error);
+				});
+		} else {
+			return Promise.reject("No Authorization Code found.");
 		}
+
+
 	}
 
 	public initialize(config: ConfigInterface): Promise<boolean> {
@@ -61,44 +87,22 @@ export class OAuth {
 	}
 
 	public signIn(): Promise<boolean> {
-		const message: Message<null> = {
-			type: SIGN_IN,
-			data: null,
-		};
-
 		return new Promise((resolve, reject) => {
+			const message: Message<null> = {
+				type: SIGN_IN,
+				data: null,
+			};
+
 			this.communicate<null, SignInResponse>(message)
 				.then((response) => {
 					if (response.type === SIGNED_IN) {
 						resolve(true);
 					} else if (response.code) {
-						this.tab = open(response.code, "_blank");
-						onmessage = (event: MessageEvent) => {
-							if (event.origin === location.origin) {
-								const authCode = event.data;
-								const message: Message<string> = {
-									type: AUTH_CODE,
-									data: authCode,
-								};
+						if (response.pkce) {
+							sessionStorage.setItem(PKCE_CODE_VERIFIER, response.pkce);
+						}
 
-								return this.communicate<string, SignInResponse>(message)
-									.then((response) => {
-										if (response.type === SIGNED_IN) {
-											resolve(true);
-										}
-
-										reject(
-											"Something went wrong during authentication. " +
-												"Failed during signing in after getting the authorization code."
-										);
-									})
-									.catch((error) => {
-										reject(error);
-									});
-							} else {
-								reject("Origin mismatch");
-							}
-						};
+						location.href = response.code;
 					} else {
 						return Promise.reject("Something went wrong during authentication");
 					}
