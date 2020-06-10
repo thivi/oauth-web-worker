@@ -343,7 +343,6 @@ class OAuthWorker {
 		this.userName = authenticatedUser.username;
 
 		this.refreshTimer = setTimeout(() => {
-			this.refreshTimer = null;
 			this.refreshAccessToken()
 				.then((response) => {})
 				.catch((error) => {
@@ -363,6 +362,9 @@ class OAuthWorker {
 		this.refreshToken = null;
 		this.tokenType = null;
 		this.userName = null;
+
+		clearTimeout(this.refreshTimer);
+		this.refreshTimer = null;
 	}
 
 	sendSignInRequest(): Promise<SignInResponse> {
@@ -582,6 +584,7 @@ class OAuthWorker {
 				})
 				.catch((error: AxiosError) => {
 					if (error?.response?.status === 401) {
+						clearTimeout(this.refreshTimer);
 						this.refreshTimer = null;
 
 						return this.refreshAccessToken()
