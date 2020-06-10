@@ -14,6 +14,12 @@ export interface Message<T> {
 export interface SignInResponse {
 	type: typeof SIGNED_IN | typeof AUTH_REQUIRED;
 	code?: string;
+	pkce?: string;
+}
+
+export interface AuthCode{
+	code: string;
+	pkce?: string;
 }
 
 export type MessageType =
