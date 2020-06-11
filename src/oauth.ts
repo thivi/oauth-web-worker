@@ -29,6 +29,8 @@ export class OAuth {
 	private worker: Worker;
 	private static instance: OAuth;
 	private tab: Window;
+	private initialized: boolean = false;
+	private signedIn: boolean = false;
 
 	private constructor() {
 		this.worker = new WorkerFile();
@@ -44,6 +46,9 @@ export class OAuth {
 	}
 
 	public listenForAuthCode(): Promise<boolean> {
+		if (!this.initialized) {
+			return Promise.reject("The object has not been initialized yet.")
+		}
 		if (this.hasAuthorizationCode()) {
 			const authCode = this.getAuthorizationCode();
 			const message: Message<AuthCode> = {
@@ -61,6 +66,7 @@ export class OAuth {
 			return this.communicate<AuthCode, SignInResponse>(message)
 				.then((response) => {
 					if (response.type === SIGNED_IN) {
+						this.signedIn = true;
 						return Promise.resolve(true);
 					}
 
@@ -78,6 +84,58 @@ export class OAuth {
 	}
 
 	public initialize(config: ConfigInterface): Promise<boolean> {
+		if (config.authorizationType && typeof config.authorizationType !== "string") {
+			return Promise.reject("The authorizationType must be a string");
+		}
+		if (!(config.baseUrls instanceof Array)) {
+			return Promise.reject("baseUrls must be an array");
+		}
+		if (config.baseUrls.find((baseUrl) => typeof baseUrl !== "string")) {
+			return Promise.reject("Array elements of baseUrls must all be string values");
+		}
+		if (typeof config.callbackURL !== "string") {
+			return Promise.reject("The callbackURL must be a string");
+		}
+		if (typeof config.clientHost !== "string") {
+			return Promise.reject("The clientHost must be a string");
+		}
+		if (typeof config.clientID !== "string") {
+			return Promise.reject("The clientID must be a string");
+		}
+		if (config.clientSecret && typeof config.clientSecret !== "string") {
+			return Promise.reject("The clientString must be a string");
+		}
+		if (config.consentDenied && typeof config.consentDenied !== "boolean") {
+			return Promise.reject("consentDenied must be a boolean");
+		}
+		if (config.enablePKCE && typeof config.enablePKCE !== "boolean") {
+			return Promise.reject("enablePKCE must be a boolean");
+		}
+		if (config.prompt && typeof config.prompt !== "string") {
+			return Promise.reject("The prompt must be a string");
+		}
+		if (config.responseMode && typeof config.responseMode !== "string") {
+			return Promise.reject("The responseMode must be a string");
+		}
+		if (config.responseMode && config.responseMode !== "form_post" && config.responseMode !== "query") {
+			return Promise.reject("The responseMode is invalid");
+		}
+		if (config.scope && !(config.scope instanceof Array)) {
+			return Promise.reject("scope must be an array");
+		}
+		if (config.scope && config.scope.find((aScope) => typeof aScope !== "string")) {
+			return Promise.reject("Array elements of scope must all be string values");
+		}
+		if (typeof config.serverOrigin !== "string") {
+			return Promise.reject("serverOrigin must be a string");
+		}
+		if (config.tenant && typeof config.tenant !== "string") {
+			return Promise.reject("The tenant must be a string");
+		}
+		if (config.tenantPath && typeof config.tenantPath !== "string") {
+			return Promise.reject("The tenantPath must be a string");
+		}
+
 		const message: Message<ConfigInterface> = {
 			type: INIT,
 			data: config,
@@ -85,6 +143,7 @@ export class OAuth {
 
 		return this.communicate<ConfigInterface, null>(message)
 			.then((response) => {
+				this.initialized = true;
 				return Promise.resolve(true);
 			})
 			.catch((error) => {
@@ -110,37 +169,46 @@ export class OAuth {
 	}
 
 	public signIn(): Promise<boolean> {
-		const message: Message<null> = {
-			type: SIGN_IN,
-			data: null,
-		};
+		if (this.initialized) {
+			const message: Message<null> = {
+				type: SIGN_IN,
+				data: null,
+			};
 
-		return this.communicate<null, SignInResponse>(message)
-			.then((response) => {
-				if (response.type === SIGNED_IN) {
-					return Promise.resolve(true);
-				} else if (response.type === AUTH_REQUIRED && response.code) {
-					if (response.pkce) {
-						sessionStorage.setItem(PKCE_CODE_VERIFIER, response.pkce);
+			return this.communicate<null, SignInResponse>(message)
+				.then((response) => {
+					if (response.type === SIGNED_IN) {
+						this.signedIn = true;
+						return Promise.resolve(true);
+					} else if (response.type === AUTH_REQUIRED && response.code) {
+						if (response.pkce) {
+							sessionStorage.setItem(PKCE_CODE_VERIFIER, response.pkce);
+						}
+
+						location.href = response.code;
+					} else {
+						return Promise.reject("Something went wrong during authentication");
 					}
-
-					location.href = response.code;
-				} else {
-					return Promise.reject("Something went wrong during authentication");
-				}
-			})
-			.catch((error) => {
-				return Promise.reject(error);
-			});
+				})
+				.catch((error) => {
+					return Promise.reject(error);
+				});
+		} else {
+			return Promise.reject("The object has not been initialized yet.")
+		}
 	}
 
 	public logout(): Promise<boolean> {
+		if (!this.signedIn) {
+			return Promise.reject("You have not signed in yet");
+		}
 		const message: Message<null> = {
 			type: LOGOUT,
 		};
 
 		return this.communicate<null, boolean>(message)
 			.then((response) => {
+				this.signedIn = false;
 				return Promise.resolve(response);
 			})
 			.catch((error) => {
@@ -149,6 +217,14 @@ export class OAuth {
 	}
 
 	public switchAccounts(requestParams: AccountSwitchRequestParams): Promise<boolean> {
+		if (!this.initialized) {
+			return Promise.reject("The object has not been initialzied yet")
+		}
+
+		if (!this.signedIn) {
+			return Promise.reject("You have not signed in yet")
+		}
+
 		const message: Message<AccountSwitchRequestParams> = {
 			type: SWITCH_ACCOUNTS,
 			data: requestParams,
@@ -181,6 +257,12 @@ export class OAuth {
 	}
 
 	public httpRequest(config: AxiosRequestConfig): Promise<AxiosResponse> {
+		if (!this.initialized) {
+			return Promise.reject("The object has not been initialized yet ")
+		}
+		if (!this.signedIn) {
+			return Promise.reject("You have not signed in yet")
+		}
 		const message: Message<AxiosRequestConfig> = {
 			type: API_CALL,
 			data: config,
