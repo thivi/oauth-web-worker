@@ -702,7 +702,15 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 			oAuthWorker
 				.callAPI(data.data)
 				.then((response) => {
-					port.postMessage({ success: true, data: { ...response.data } });
+					port.postMessage({
+						success: true,
+						data: {
+							data: response.data,
+							status: response.status,
+							statusText: response.statusText,
+							headers: response.headers,
+						},
+					});
 				})
 				.catch((error) => {
 					port.postMessage({ success: false, error: error });
