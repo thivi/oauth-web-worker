@@ -17,7 +17,6 @@
  */
 
 import {
-	ResponseMessage,
 	ConfigInterface,
 	ResponseModeTypes,
 	TokenResponseInterface,
@@ -43,6 +42,9 @@ import { getJWKForTheIdToken, isValidIdToken, getCodeVerifier, getCodeChallenge 
 import { OIDC_SCOPE } from "./constants/token";
 
 class OAuthWorker {
+	/**
+	 * Values to be set when initializing the library.
+	 */
 	private authorizationType?: string;
 	private callbackURL: string;
 	private clientHost: string;
@@ -57,8 +59,10 @@ class OAuthWorker {
 	private tenant: string;
 	private tenantPath: string;
 	private baseUrls: string[];
-	private token: string;
 
+	/**
+	 * Set after querying the IdP for oidc endpoints.
+	 */
 	private isOpConfigInitiated: boolean;
 	private authorizeEndpoint: string;
 	private tokenEndpoint: string;
@@ -70,6 +74,10 @@ class OAuthWorker {
 	private authorizationCode: string;
 	private pkceCodeVerifier: string;
 
+	/**
+	 * Set after successful authentication.
+	 */
+	private token: string;
 	private accessTokenExpiresIn: string;
 	private accessTokenIssuedAt: string;
 	private displayName: string;
@@ -84,6 +92,11 @@ class OAuthWorker {
 
 	private refreshTimer: number;
 
+	/**
+	 * 
+	 * 
+	 * @param {ConfigInterface} config 
+	 */
 	constructor(config: ConfigInterface) {
 		this.authorizationType = config.authorizationType;
 		this.callbackURL = config.callbackURL;
@@ -119,15 +132,15 @@ class OAuthWorker {
 		);
 	}
 
-	setIsOpConfigInitiated(status: boolean) {
+	public setIsOpConfigInitiated(status: boolean) {
 		this.isOpConfigInitiated = status;
 	}
 
-	isSignedIn() {
+	public isSignedIn() {
 		return !!this.token;
 	}
 
-	doesTokenExist() {
+	public doesTokenExist() {
 		if (this.token) {
 			return true;
 		}
@@ -135,11 +148,11 @@ class OAuthWorker {
 		return false;
 	}
 
-	setAuthorizationCode(authCode: string) {
+	public setAuthorizationCode(authCode: string) {
 		this.authorizationCode = authCode;
 	}
 
-	initOPConfiguration(forceInit?: boolean): Promise<any> {
+	public initOPConfiguration(forceInit?: boolean): Promise<any> {
 		if (!forceInit && this.isOpConfigInitiated) {
 			return Promise.resolve();
 		}
@@ -205,7 +218,7 @@ class OAuthWorker {
 		};
 	}
 
-	setPkceCodeVerifier(pkce: string) {
+	public setPkceCodeVerifier(pkce: string) {
 		this.pkceCodeVerifier = pkce;
 	}
 
@@ -245,7 +258,7 @@ class OAuthWorker {
 			});
 	}
 
-	sendTokenRequest(): Promise<TokenResponseInterface> {
+	public sendTokenRequest(): Promise<TokenResponseInterface> {
 		const tokenEndpoint = this.tokenEndpoint;
 
 		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
@@ -303,7 +316,7 @@ class OAuthWorker {
 			});
 	}
 
-	getAuthenticatedUser(idToken: string): AuthenticatedUserInterface {
+	public getAuthenticatedUser(idToken: string): AuthenticatedUserInterface {
 		const payload = JSON.parse(atob(idToken.split(".")[1]));
 		const emailAddress = payload.email ? payload.email : null;
 
@@ -314,7 +327,7 @@ class OAuthWorker {
 		};
 	}
 
-	sendAuthorizationRequest = (): string => {
+	public sendAuthorizationRequest = (): string => {
 		const authorizeEndpoint = this.authorizeEndpoint;
 
 		if (!authorizeEndpoint || authorizeEndpoint.trim().length === 0) {
@@ -393,7 +406,7 @@ class OAuthWorker {
 		this.refreshTimer = null;
 	}
 
-	sendSignInRequest(): Promise<SignInResponse> {
+	public sendSignInRequest(): Promise<SignInResponse> {
 		if (this.authorizationCode) {
 			return this.sendTokenRequest()
 				.then((response: TokenResponseInterface) => {
@@ -557,7 +570,7 @@ class OAuthWorker {
 			});
 	}
 
-	refreshAccessToken(): Promise<boolean> {
+	public refreshAccessToken(): Promise<boolean> {
 		return new Promise((resolve, reject) => {
 			this.sendRefreshTokenRequest()
 				.then((response) => {
@@ -570,7 +583,7 @@ class OAuthWorker {
 		});
 	}
 
-	switchAccount(requestParams: AccountSwitchRequestParams): Promise<boolean> {
+	public switchAccount(requestParams: AccountSwitchRequestParams): Promise<boolean> {
 		return new Promise((resolve, reject) => {
 			this.sendAccountSwitchRequest(requestParams)
 				.then((response) => {
@@ -583,7 +596,7 @@ class OAuthWorker {
 		});
 	}
 
-	logout(): Promise<boolean> {
+	public logout(): Promise<boolean> {
 		return new Promise((resolve, reject) => {
 			this.sendRevokeTokenRequest()
 				.then((response) => {
@@ -595,7 +608,7 @@ class OAuthWorker {
 		});
 	}
 
-	httpRequest(config: AxiosRequestConfig): Promise<AxiosResponse> {
+	public httpRequest(config: AxiosRequestConfig): Promise<AxiosResponse> {
 		let matches = false;
 		this.baseUrls.forEach((baseUrl) => {
 			if (config.url.startsWith(baseUrl)) {
