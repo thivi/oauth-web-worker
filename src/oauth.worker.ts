@@ -119,6 +119,10 @@ class OAuthWorker {
 		this.isOpConfigInitiated = status;
 	}
 
+	isSignedIn() {
+		return !!this.token;
+	}
+
 	doesTokenExist() {
 		if (this.token) {
 			return true;
@@ -587,7 +591,7 @@ class OAuthWorker {
 		});
 	}
 
-	callAPI(config: AxiosRequestConfig): Promise<AxiosResponse> {
+	httpRequest(config: AxiosRequestConfig): Promise<AxiosResponse> {
 		let matches = false;
 		this.baseUrls.forEach((baseUrl) => {
 			if (config.url.startsWith(baseUrl)) {
@@ -699,50 +703,62 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 				});
 			break;
 		case API_CALL:
-			oAuthWorker
-				.callAPI(data.data)
-				.then((response) => {
-					port.postMessage({
-						success: true,
-						data: {
-							data: response.data,
-							status: response.status,
-							statusText: response.statusText,
-							headers: response.headers,
-						},
+			if (!oAuthWorker.isSignedIn()) {
+				port.postMessage({ success: false, error: "You have not signed in yet." });
+			} else {
+				oAuthWorker
+					.httpRequest(data.data)
+					.then((response) => {
+						port.postMessage({
+							success: true,
+							data: {
+								data: response.data,
+								status: response.status,
+								statusText: response.statusText,
+								headers: response.headers,
+							},
+						});
+					})
+					.catch((error) => {
+						port.postMessage({ success: false, error: error });
 					});
-				})
-				.catch((error) => {
-					port.postMessage({ success: false, error: error });
-				});
+			}
 			break;
 		case LOGOUT:
-			oAuthWorker
-				.logout()
-				.then((response) => {
-					if (response) {
-						port.postMessage({ success: true, data: true });
-					} else {
-						port.postMessage({ success: false, error: `Received ${response}` });
-					}
-				})
-				.catch((error) => {
-					port.postMessage({ success: false, error: error });
-				});
+			if (!oAuthWorker.isSignedIn()) {
+				port.postMessage({ success: false, error: "You have not signed in yet." });
+			} else {
+				oAuthWorker
+					.logout()
+					.then((response) => {
+						if (response) {
+							port.postMessage({ success: true, data: true });
+						} else {
+							port.postMessage({ success: false, error: `Received ${response}` });
+						}
+					})
+					.catch((error) => {
+						port.postMessage({ success: false, error: error });
+					});
+			}
 			break;
 		case SWITCH_ACCOUNTS:
-			oAuthWorker
-				.switchAccount(data.data)
-				.then((response) => {
-					if (response) {
-						port.postMessage({ success: true, data: true });
-					} else {
-						port.postMessage({ success: false, error: `Received ${response}` });
-					}
-				})
-				.catch((error) => {
-					port.postMessage({ success: false, error: error });
-				});
+			if (!oAuthWorker.isSignedIn()) {
+				port.postMessage({ success: false, error: "You have not signed in yet." });
+			} else {
+				oAuthWorker
+					.switchAccount(data.data)
+					.then((response) => {
+						if (response) {
+							port.postMessage({ success: true, data: true });
+						} else {
+							port.postMessage({ success: false, error: `Received ${response}` });
+						}
+					})
+					.catch((error) => {
+						port.postMessage({ success: false, error: error });
+					});
+			}
 			break;
 		default:
 			port.postMessage({ success: false, error: `Unknown message type ${data?.type}` });
