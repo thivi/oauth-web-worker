@@ -2,7 +2,7 @@ import { Message, ResponseMessage, SignInResponse, AuthCode } from "./models/mes
 // @ts-ignore
 import WorkerFile from "./oauth.worker.ts";
 import { ConfigInterface } from "./models/client";
-import { INIT, SIGN_IN, SIGNED_IN, AUTH_CODE, LOGOUT, SWITCH_ACCOUNTS, API_CALL } from "./constants";
+import { INIT, SIGN_IN, SIGNED_IN, AUTH_CODE, LOGOUT, SWITCH_ACCOUNTS, API_CALL, AUTH_REQUIRED } from "./constants";
 import { AUTHORIZATION_CODE, PKCE_CODE_VERIFIER } from "./constants/token";
 import { AccountSwitchRequestParams } from "./models";
 import { AxiosRequestConfig, AxiosResponse } from "axios";
@@ -92,30 +92,28 @@ export class OAuth {
 	}
 
 	public signIn(): Promise<boolean> {
-		return new Promise((resolve, reject) => {
-			const message: Message<null> = {
-				type: SIGN_IN,
-				data: null,
-			};
+		const message: Message<null> = {
+			type: SIGN_IN,
+			data: null,
+		};
 
-			this.communicate<null, SignInResponse>(message)
-				.then((response) => {
-					if (response.type === SIGNED_IN) {
-						resolve(true);
-					} else if (response.code) {
-						if (response.pkce) {
-							sessionStorage.setItem(PKCE_CODE_VERIFIER, response.pkce);
-						}
-
-						location.href = response.code;
-					} else {
-						return Promise.reject("Something went wrong during authentication");
+		return this.communicate<null, SignInResponse>(message)
+			.then((response) => {
+				if (response.type === SIGNED_IN) {
+					return Promise.resolve(true);
+				} else if (response.type === AUTH_REQUIRED && response.code) {
+					if (response.pkce) {
+						sessionStorage.setItem(PKCE_CODE_VERIFIER, response.pkce);
 					}
-				})
-				.catch((error) => {
-					return Promise.reject(error);
-				});
-		});
+
+					location.href = response.code;
+				} else {
+					return Promise.reject("Something went wrong during authentication");
+				}
+			})
+			.catch((error) => {
+				return Promise.reject(error);
+			});
 	}
 
 	public logout(): Promise<boolean> {
