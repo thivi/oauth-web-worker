@@ -83,8 +83,8 @@ export class OAuth {
 	private signedIn: boolean = false;
 
 	/**
-	 * @private 
-	 * 
+	 * @private
+	 *
 	 * The private singleton class constructor.
 	 */
 	private constructor() {
@@ -92,7 +92,79 @@ export class OAuth {
 	}
 
 	/**
-	 * This returns the created instance of the OAuth class. 
+	 * @private
+	 *
+	 * Extracts the authorization code from the URL and returns it.
+	 *
+	 * @returns {string} The authorization code.
+	 *
+	 */
+	private getAuthorizationCode(): string {
+		if (new URL(window.location.href).searchParams.get(AUTHORIZATION_CODE)) {
+			return new URL(window.location.href).searchParams.get(AUTHORIZATION_CODE);
+		}
+
+		return null;
+	}
+
+	/**
+	 * @private
+	 *
+	 * @returns {string} Removes the path parameters and returns the URL.
+	 *
+	 * Example:
+	 * `https://localhost:9443?code=g43dhkj243wghdgwedew65&session=34khkg2g`
+	 * will be stripped to `https://localhost:9443`
+	 */
+	private removeAuthorizationCode(): string {
+		const url = location.href;
+		return url.replace(/\?code=.*$/, "");
+	}
+
+	/**
+	 * @private
+	 *
+	 * Checks if the authorization code is present in the URL or not.
+	 *
+	 * @returns {boolean} Authorization code presence status.
+	 */
+	private hasAuthorizationCode(): boolean {
+		return !!this.getAuthorizationCode();
+	}
+
+	/**
+	 * @private
+	 *
+	 * Sends a message to the web worker and returns the response.
+	 *
+	 * T - Request data type.
+	 *
+	 * R - response data type.
+	 *
+	 * @param {Message} message - The message object
+	 * @param {number} timeout The number seconds to wait before timing the request out. - optional
+	 *
+	 * @returns {Promise<R>} A promise that resolves with the obtained data.
+	 */
+	private communicate<T, R>(message: Message<T>, timeout?: number): Promise<R> {
+		const channel = new MessageChannel();
+
+		this.worker.postMessage(message, [channel.port2]);
+
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				reject("Operation timed out");
+			}, timeout ?? 5000);
+
+			return (channel.port1.onmessage = ({ data }: { data: ResponseMessage<R> }) => {
+				clearTimeout(timer);
+				data.success ? resolve(data.data) : reject(data.error);
+			});
+		});
+	}
+
+	/**
+	 * This returns the created instance of the OAuth class.
 	 * If an instance doesn't exist, it creates one and returns it.
 	 * @returns {OAuth} An instance of the OAuth class.
 	 */
@@ -150,11 +222,11 @@ export class OAuth {
 
 	/**
 	 * Initializes the object with authentication parameters.
-	 * 
+	 *
 	 * @param {ConfigInterface} config The configuration object.
-	 * 
+	 *
 	 * @returns {Promise<boolean>} Promise that resolves when initialization is successful.
-	 * 
+	 *
 	 * The `config` object has the following attributes:
 	 * ```
 	 * 	var config = {
@@ -164,13 +236,13 @@ export class OAuth {
 	 *  	clientSecret?: string //optional
 	 * 		consentDenied?: boolean //optional
 	 * 		enablePKCE?: boolean //optional
-     *		prompt?: string //optional
-     *		responseMode?: "query" | "form-post" //optional
-     *		scope?: string[] //optional
-     *		serverOrigin: string
-     *		tenant?: string //optional
-     *		tenantPath?: string //optional
-     *		baseUrls: string[]
+	 *		prompt?: string //optional
+	 *		responseMode?: "query" | "form-post" //optional
+	 *		scope?: string[] //optional
+	 *		serverOrigin: string
+	 *		tenant?: string //optional
+	 *		tenantPath?: string //optional
+	 *		baseUrls: string[]
 	 *		callbackURL: string
 	 *	}
 	 * ```
@@ -244,49 +316,8 @@ export class OAuth {
 	}
 
 	/**
-	 * @private
-	 * 
-	 * Extracts the authorization code from the URL and returns it.
-	 * 
-	 * @returns {string} The authorization code.
-	 * 
-	 */
-	private getAuthorizationCode(): string {
-		if (new URL(window.location.href).searchParams.get(AUTHORIZATION_CODE)) {
-			return new URL(window.location.href).searchParams.get(AUTHORIZATION_CODE);
-		}
-
-		return null;
-	}
-
-	/**
-	 * @private
-	 * 
-	 * @returns {string} Removes the path parameters and returns the URL.
-	 * 
-	 * Example: 
-	 * `https://localhost:9443?code=g43dhkj243wghdgwedew65&session=34khkg2g` 
-	 * will be stripped to `https://localhost:9443`
-	 */
-	private removeAuthorizationCode(): string {
-		const url = location.href;
-		return url.replace(/\?code=.*$/, "");
-	}
-
-	/**
-	 * @private 
-	 * 
-	 * Checks if the authorization code is present in the URL or not.
-	 * 
-	 * @returns {boolean} Authorization code presence status.
-	 */
-	private hasAuthorizationCode(): boolean {
-		return !!this.getAuthorizationCode();
-	}
-
-	/**
 	 * Initiates the authentication flow.
-	 * 
+	 *
 	 * @returns {Promise<boolean>} A promise that resolves when authentication is successful.
 	 */
 	public signIn(): Promise<boolean> {
@@ -321,7 +352,7 @@ export class OAuth {
 
 	/**
 	 * Initiates the sign out flow.
-	 * 
+	 *
 	 * @returns {Promise<boolean>} A promise that resolves when sign out is completed.
 	 */
 	public signOut(): Promise<boolean> {
@@ -344,17 +375,17 @@ export class OAuth {
 
 	/**
 	 * Switches accounts.
-	 * 
+	 *
 	 * @param {AccountSwitchRequestParams} requestParams Request parameters.
-	 * 
+	 *
 	 * @returns {Promise<boolean>} A promise that resolves when account switching is successful.
-	 * 
+	 *
 	 * `requestParams` has the following attributes:
 	 *  - username: `string`
 	 *	- "userstore-domain": `string`
 	 *	- "tenant-domain": `string`
 	 *
-	 * 
+	 *
 	 */
 	public switchAccounts(requestParams: AccountSwitchRequestParams): Promise<boolean> {
 		if (!this.initialized) {
@@ -380,43 +411,11 @@ export class OAuth {
 	}
 
 	/**
-	 * @private 
-	 * 
-	 * Sends a message to the web worker and returns the response.
-	 * 
-	 * T - Request data type.
-	 * 
-	 * R - response data type.
-	 * 
-	 * @param {Message} message - The message object
-	 * @param {number} timeout The number seconds to wait before timing the request out. - optional
-	 * 
-	 * @returns {Promise<R>} A promise that resolves with the obtained data. 
-	 */
-	private communicate<T, R>(message: Message<T>, timeout?: number): Promise<R> {
-		const channel = new MessageChannel();
-
-		this.worker.postMessage(message, [channel.port2]);
-
-		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				reject("Operation timed out");
-			}, timeout ?? 5000);
-
-			return (channel.port1.onmessage = ({ data }: { data: ResponseMessage<R> }) => {
-				clearTimeout(timer);
-				data.success ? resolve(data.data) : reject(data.error);
-			});
-		});
-	}
-
-	/**
-	 * @private
-	 * 
+	 *
 	 * Send the API request to the web worker and returns the response.
-	 * 
+	 *
 	 * @param {AxiosRequestConfig} config The Axios Request Config object
-	 * 
+	 *
 	 * @returns {Promise<AxiosResponse>} A promise that resolves with the response data.
 	 */
 	public httpRequest(config: AxiosRequestConfig): Promise<AxiosResponse> {
