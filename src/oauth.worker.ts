@@ -58,6 +58,7 @@ class OAuthWorker {
 	private tenantPath: string;
 	private baseUrls: string[];
 	private token: string;
+
 	private isOpConfigInitiated: boolean;
 	private authorizeEndpoint: string;
 	private tokenEndpoint: string;
@@ -65,8 +66,10 @@ class OAuthWorker {
 	private jwksUri: string;
 	private revokeTokenEndpoint: string;
 	private issuer: string;
+
 	private authorizationCode: string;
 	private pkceCodeVerifier: string;
+
 	private accessTokenExpiresIn: string;
 	private accessTokenIssuedAt: string;
 	private displayName: string;
@@ -76,6 +79,7 @@ class OAuthWorker {
 	private tokenType: string;
 	private userName: string;
 	private allowedScope: string;
+	
 	private httpClient: AxiosInstance;
 
 	private refreshTimer: number;
@@ -184,7 +188,7 @@ class OAuthWorker {
 				return Promise.resolve(
 					new Error(
 						"Initialized OpenID Provider configuration from default configuration." +
-							"Because failed to access welknown endpoint: " +
+							"Because failed to access wellknown endpoint: " +
 							this.serverOrigin +
 							this.tenant +
 							SERVICE_RESOURCES.wellKnown
@@ -642,7 +646,7 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 				oAuthWorker = new OAuthWorker(data.data);
 				port.postMessage({ success: true });
 			} catch (error) {
-				port.postMessage({ sucess: false, error: error });
+				port.postMessage({ success: false, error: error });
 			}
 			break;
 		case SIGN_IN:
@@ -669,7 +673,7 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 							});
 					})
 					.catch((error) => {
-						port.postMessage({ sucess: false, error: error });
+						port.postMessage({ success: false, error: error });
 					});
 			}
 			break;
@@ -699,7 +703,7 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 						});
 				})
 				.catch((error) => {
-					port.postMessage({ sucess: false, error: error });
+					port.postMessage({ success: false, error: error });
 				});
 			break;
 		case API_CALL:
