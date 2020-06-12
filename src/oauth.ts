@@ -157,6 +157,8 @@ export const OAuth: OAuthSingletonInterface = (function (): OAuthSingletonInterf
 	};
 
 	/**
+	 * @constructor
+	 * 
 	 * This returns the object containing the public methods.
 	 *
 	 * @returns {OAuthInterface} OAuthInterface object

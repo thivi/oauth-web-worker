@@ -29,12 +29,11 @@ export interface OAuthWorkerInterface {
 	setAuthorizationCode(authCode: string): void;
 	initOPConfiguration(forceInit?: boolean): Promise<any>;
 	setPkceCodeVerifier(pkce: string): void;
-	sendTokenRequest(): Promise<TokenResponseInterface>;
-	sendAuthorizationRequest(): string;
+	generateAuthorizationCodeRequestURL(): string;
 	sendSignInRequest(): Promise<SignInResponse>;
 	refreshAccessToken(): Promise<boolean>;
 	switchAccount(requestParams: AccountSwitchRequestParams): Promise<boolean>;
-	logout(): Promise<boolean>;
+	signOut(): Promise<boolean>;
 	httpRequest(config: AxiosRequestConfig): Promise<AxiosResponse>;
 }
 

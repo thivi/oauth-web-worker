@@ -25,8 +25,6 @@ import {
 	SignInResponse,
 	MessageType,
 	AccountSwitchRequestParams,
-	OAuthSingletonInterface,
-	OAuthInterface,
 	OAuthWorkerInterface,
 	OAuthWorkerSingletonInterface,
 } from "./models";
@@ -98,6 +96,13 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 
 	let instance: OAuthWorkerInterface;
 
+	/**
+	 * @private
+	 *
+	 * Gets a new access token using the `refresh-token` grant.
+	 *
+	 * @returns {Promise<TokenResponseInterface>} Promise that resolves with the token response.
+	 */
 	const sendRefreshTokenRequest = (): Promise<TokenResponseInterface> => {
 		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
 			return Promise.reject("Invalid token endpoint found.");
@@ -140,6 +145,13 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 			});
 	};
 
+	/**
+	 * @private
+	 *
+	 * Revokes the access token so that the user is effectively logged out.
+	 *
+	 * @returns {Promise<any>} A promise that resolves when signing out is successful.
+	 */
 	const sendRevokeTokenRequest = (): Promise<any> => {
 		if (!revokeTokenEndpoint || revokeTokenEndpoint.trim().length === 0) {
 			return Promise.reject("Invalid revoke token endpoint found.");
@@ -170,6 +182,16 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 			});
 	};
 
+	/**
+	 * @private
+	 *
+	 * Allows switching user accounts.
+	 *
+	 * @param {AccountSwitchRequestParams} requestParams Contains the username,
+	 * userstore domain and tenant domain information.
+	 *
+	 * @returns {Promise<TokenResponseInterface>} A promise that resolves with the access token, ID token, etc.
+	 */
 	const sendAccountSwitchRequest = (requestParams: AccountSwitchRequestParams): Promise<TokenResponseInterface> => {
 		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
 			return Promise.reject(new Error("Invalid token endpoint found."));
@@ -225,6 +247,15 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 			});
 	};
 
+	/**
+	 * @private
+	 *
+	 * Returns the http header to be sent when requesting tokens.
+	 *
+	 * @param {string} clientHost The client host.
+	 *
+	 * @returns {TokenRequestHeader} The token request header.
+	 */
 	const getTokenRequestHeaders = (clientHost: string): TokenRequestHeader => {
 		return {
 			Accept: "application/json",
@@ -233,7 +264,18 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		};
 	};
 
-	const validateIdToken = (clientID: string, idToken: string, serverOrigin: string): Promise<any> => {
+	/**
+	 * @private
+	 *
+	 * Checks the validity of the ID token.
+	 *
+	 * @param {string} clientID The client ID.
+	 * @param {string} idToken The ID token.
+	 * @param {string} serverOrigin The server origin.
+	 *
+	 * @returns {Promise<boolean>} A promise that resolves with the validity status of the ID token.
+	 */
+	const validateIdToken = (clientID: string, idToken: string, serverOrigin: string): Promise<boolean> => {
 		const jwksEndpoint = jwksUri;
 
 		if (!jwksEndpoint || jwksEndpoint.trim().length === 0) {
@@ -261,6 +303,15 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 			});
 	};
 
+	/**
+	 * @private
+	 *
+	 * Returns the authenticated user's information.
+	 *
+	 * @param {string} idToken ID token.
+	 *
+	 * @returns {AuthenticatedUserInterface} User information.
+	 */
 	const getAuthenticatedUser = (idToken: string): AuthenticatedUserInterface => {
 		const payload = JSON.parse(atob(idToken.split(".")[1]));
 		const emailAddress = payload.email ? payload.email : null;
@@ -272,6 +323,14 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		};
 	};
 
+	/**
+	 * @private
+	 *
+	 * Initializes user session.
+	 *
+	 * @param {TokenResponseInterface} tokenResponse The response obtained by querying the `token` endpoint.
+	 * @param {AuthenticatedUserInterface} authenticatedUser User information.
+	 */
 	const initUserSession = (
 		tokenResponse: TokenResponseInterface,
 		authenticatedUser: AuthenticatedUserInterface
@@ -296,6 +355,11 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		}, (parseInt(accessTokenExpiresIn) - 10) * 1000);
 	};
 
+	/**
+	 * @private
+	 *
+	 * Destroys user session.
+	 */
 	const destroyUserSession = (): void => {
 		token = null;
 		accessTokenExpiresIn = null;
@@ -312,15 +376,93 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		refreshTimer = null;
 	};
 
+	/**
+	 * @private
+	 *
+	 * Requests the `token` endpoint for an access token.
+	 *
+	 * @returns {Promise<TokenResponseInterface>} A promise that resolves with the token response.
+	 */
+	const sendTokenRequest = (): Promise<TokenResponseInterface> => {
+		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
+			return Promise.reject(new Error("Invalid token endpoint found."));
+		}
+
+		const body = [];
+		body.push(`client_id=${clientID}`);
+
+		if (clientSecret && clientSecret.trim().length > 0) {
+			body.push(`client_secret=${clientSecret}`);
+		}
+
+		const code = authorizationCode;
+		authorizationCode = null;
+		body.push(`code=${code}`);
+
+		body.push("grant_type=authorization_code");
+		body.push(`redirect_uri=${callbackURL}`);
+
+		if (enablePKCE) {
+			body.push(`code_verifier=${pkceCodeVerifier}`);
+			pkceCodeVerifier = null;
+		}
+
+		return axios
+			.post(tokenEndpoint, body.join("&"), { headers: getTokenRequestHeaders(clientHost) })
+			.then((response) => {
+				if (response.status !== 200) {
+					return Promise.reject(
+						new Error("Invalid status code received in the token response: " + response.status)
+					);
+				}
+				return validateIdToken(clientID, response.data.id_token, serverOrigin).then((valid) => {
+					if (valid) {
+						const tokenResponse: TokenResponseInterface = {
+							accessToken: response.data.access_token,
+							expiresIn: response.data.expires_in,
+							idToken: response.data.id_token,
+							refreshToken: response.data.refresh_token,
+							scope: response.data.scope,
+							tokenType: response.data.token_type,
+						};
+
+						return Promise.resolve(tokenResponse);
+					}
+
+					return Promise.reject(
+						new Error("Invalid id_token in the token response: " + response.data.id_token)
+					);
+				});
+			})
+			.catch((error) => {
+				return Promise.reject(error.response);
+			});
+	};
+
+	/**
+	 * Sets if the OpenID configuration has been initiated or not.
+	 *
+	 * @param {boolean} status Status to set.
+	 */
 	const setIsOpConfigInitiated = (status: boolean) => {
 		isOpConfigInitiated = status;
 	};
 
-	const isSignedIn = () => {
+	/**
+	 * Returns if the user has signed in or not.
+	 *
+	 * @returns {boolean} Signed in or not.
+	 */
+	const isSignedIn = (): boolean => {
 		return !!token;
 	};
 
-	const doesTokenExist = () => {
+	/**
+	 * Checks if an access token exists.
+	 *
+	 * @returns {boolean} If the access token exists or not.
+	 */
+	const doesTokenExist = (): boolean => {
 		if (token) {
 			return true;
 		}
@@ -328,10 +470,22 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		return false;
 	};
 
+	/**
+	 * Sets the authorization code.
+	 *
+	 * @param {string} authCode The authorization code.
+	 */
 	const setAuthorizationCode = (authCode: string) => {
 		authorizationCode = authCode;
 	};
 
+	/**
+	 * Queries the OpenID endpoint to get the necessary API endpoints.
+	 *
+	 * @param {boolean} forceInit Determines if a OpenID-configuration initiation should be forced.
+	 *
+	 * @returns {Promise<any>} A promise that resolves with the endpoint data.
+	 */
 	const initOPConfiguration = (forceInit?: boolean): Promise<any> => {
 		if (!forceInit && isOpConfigInitiated) {
 			return Promise.resolve();
@@ -390,67 +544,21 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 			});
 	};
 
+	/**
+	 * Sets the PKCE code.
+	 *
+	 * @param {string} pkce The PKCE code.
+	 */
 	const setPkceCodeVerifier = (pkce: string) => {
 		pkceCodeVerifier = pkce;
 	};
 
-	const sendTokenRequest = (): Promise<TokenResponseInterface> => {
-		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
-			return Promise.reject(new Error("Invalid token endpoint found."));
-		}
-
-		const body = [];
-		body.push(`client_id=${clientID}`);
-
-		if (clientSecret && clientSecret.trim().length > 0) {
-			body.push(`client_secret=${clientSecret}`);
-		}
-
-		const code = authorizationCode;
-		authorizationCode = null;
-		body.push(`code=${code}`);
-
-		body.push("grant_type=authorization_code");
-		body.push(`redirect_uri=${callbackURL}`);
-
-		if (enablePKCE) {
-			body.push(`code_verifier=${pkceCodeVerifier}`);
-			pkceCodeVerifier = null;
-		}
-
-		return axios
-			.post(tokenEndpoint, body.join("&"), { headers: getTokenRequestHeaders(clientHost) })
-			.then((response) => {
-				if (response.status !== 200) {
-					return Promise.reject(
-						new Error("Invalid status code received in the token response: " + response.status)
-					);
-				}
-				return validateIdToken(clientID, response.data.id_token, serverOrigin).then((valid) => {
-					if (valid) {
-						const tokenResponse: TokenResponseInterface = {
-							accessToken: response.data.access_token,
-							expiresIn: response.data.expires_in,
-							idToken: response.data.id_token,
-							refreshToken: response.data.refresh_token,
-							scope: response.data.scope,
-							tokenType: response.data.token_type,
-						};
-
-						return Promise.resolve(tokenResponse);
-					}
-
-					return Promise.reject(
-						new Error("Invalid id_token in the token response: " + response.data.id_token)
-					);
-				});
-			})
-			.catch((error) => {
-				return Promise.reject(error.response);
-			});
-	};
-
-	const sendAuthorizationRequest = (): string => {
+	/**
+	 * Generates and returns the authorization code request URL.
+	 *
+	 * @returns {string} The authorization code request URL.
+	 */
+	const generateAuthorizationCodeRequestURL = (): string => {
 		if (!authorizeEndpoint || authorizeEndpoint.trim().length === 0) {
 			throw new Error("Invalid authorize endpoint found.");
 		}
@@ -487,6 +595,11 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		return authorizeRequest;
 	};
 
+	/**
+	 * Sends a sign in request.
+	 * 
+	 * @returns {Promise<SignInResponse>} A promise that resolves with the Sign In response.
+	 */
 	const sendSignInRequest = (): Promise<SignInResponse> => {
 		if (authorizationCode) {
 			return sendTokenRequest()
@@ -502,7 +615,7 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 					if (error.response && error.response.status === 400) {
 						return Promise.resolve({
 							type: AUTH_REQUIRED,
-							code: sendAuthorizationRequest(),
+							code: generateAuthorizationCodeRequestURL(),
 							pkce: pkceCodeVerifier,
 						});
 					}
@@ -512,12 +625,17 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		} else {
 			return Promise.resolve({
 				type: AUTH_REQUIRED,
-				code: sendAuthorizationRequest(),
+				code: generateAuthorizationCodeRequestURL(),
 				pkce: pkceCodeVerifier,
 			});
 		}
 	};
 
+	/**
+	 * Refreshes the token.
+	 * 
+	 * @returns {Promise<boolean>} A promise that resolves with `true` if refreshing is successful.
+	 */
 	const refreshAccessToken = (): Promise<boolean> => {
 		return new Promise((resolve, reject) => {
 			sendRefreshTokenRequest()
@@ -531,6 +649,11 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		});
 	};
 
+	/**
+	 * Switches accounts.
+	 * 
+	 * @param {AccountSwitchRequestParams} requestParams Contains the username, userstore domain and tenant domain. 
+	 */
 	const switchAccount = (requestParams: AccountSwitchRequestParams): Promise<boolean> => {
 		return new Promise((resolve, reject) => {
 			sendAccountSwitchRequest(requestParams)
@@ -544,7 +667,12 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		});
 	};
 
-	const logout = (): Promise<boolean> => {
+	/**
+	 * Signs out.
+	 * 
+	 * @returns {Promise<boolean>} A promise that resolves with `true` if sign out is successful.
+	 */
+	const signOut = (): Promise<boolean> => {
 		return new Promise((resolve, reject) => {
 			sendRevokeTokenRequest()
 				.then((response) => {
@@ -556,6 +684,13 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 		});
 	};
 
+	/**
+	 * Makes api calls.
+	 * 
+	 * @param {AxiosRequestConfig} config API request data.
+	 * 
+	 * @returns {AxiosResponse} A promise that resolves with the response.
+	 */
 	const httpRequest = (config: AxiosRequestConfig): Promise<AxiosResponse> => {
 		let matches = false;
 		baseUrls.forEach((baseUrl) => {
@@ -596,9 +731,13 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 	};
 
 	/**
+	 * @constructor
+	 * 
+	 * Constructor function that returns an object containing all the public methods.
 	 *
-	 *
-	 * @param {ConfigInterface} config
+	 * @param {ConfigInterface} config Configuration data.
+	 * 
+	 * @returns {OAuthWorkerInterface} Returns the object containing 
 	 */
 	function Constructor(config: ConfigInterface): OAuthWorkerInterface {
 		authorizationType = config.authorizationType;
@@ -641,12 +780,11 @@ const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSing
 			setAuthorizationCode,
 			initOPConfiguration,
 			setPkceCodeVerifier,
-			sendTokenRequest,
-			sendAuthorizationRequest,
+			generateAuthorizationCodeRequestURL,
 			sendSignInRequest,
 			refreshAccessToken,
 			switchAccount,
-			logout,
+			signOut,
 			httpRequest,
 		};
 	}
@@ -679,8 +817,8 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 			break;
 		case SIGN_IN:
 			if (!oAuthWorker) {
-				port.postMessage({ success: false, error:"Worker has not been initiated." });
-			}else if (oAuthWorker.doesTokenExist()) {
+				port.postMessage({ success: false, error: "Worker has not been initiated." });
+			} else if (oAuthWorker.doesTokenExist()) {
 				port.postMessage({ success: true, data: { type: SIGNED_IN } });
 			} else {
 				oAuthWorker
@@ -712,6 +850,7 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 				port.postMessage({ success: false, error: "Worker has not been initiated." });
 				break;
 			}
+			
 			oAuthWorker.setAuthorizationCode(data.data.code);
 
 			if (data.data.pkce) {
@@ -777,7 +916,7 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 				port.postMessage({ success: false, error: "You have not signed in yet." });
 			} else {
 				oAuthWorker
-					.logout()
+					.signOut()
 					.then((response) => {
 						if (response) {
 							port.postMessage({ success: true, data: true });
