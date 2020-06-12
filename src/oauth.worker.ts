@@ -25,6 +25,10 @@ import {
 	SignInResponse,
 	MessageType,
 	AccountSwitchRequestParams,
+	OAuthSingletonInterface,
+	OAuthInterface,
+	OAuthWorkerInterface,
+	OAuthWorkerSingletonInterface,
 } from "./models";
 import {
 	INIT,
@@ -41,189 +45,196 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } f
 import { getJWKForTheIdToken, isValidIdToken, getCodeVerifier, getCodeChallenge } from "./utils";
 import { OIDC_SCOPE } from "./constants/token";
 
-class OAuthWorker {
+const OAuthWorker: OAuthWorkerSingletonInterface = (function (): OAuthWorkerSingletonInterface {
 	/**
 	 * Values to be set when initializing the library.
 	 */
-	private authorizationType?: string;
-	private callbackURL: string;
-	private clientHost: string;
-	private clientID: string;
-	private clientSecret: string;
-	private consentDenied: boolean;
-	private enablePKCE: boolean;
-	private prompt: string;
-	private responseMode: ResponseModeTypes;
-	private requestedScope: string[];
-	private serverOrigin: string;
-	private tenant: string;
-	private tenantPath: string;
-	private baseUrls: string[];
+	let authorizationType: string;
+	let callbackURL: string;
+	let clientHost: string;
+	let clientID: string;
+	let clientSecret: string;
+	let consentDenied: boolean;
+	let enablePKCE: boolean;
+	let prompt: string;
+	let responseMode: ResponseModeTypes;
+	let requestedScope: string[];
+	let serverOrigin: string;
+	let tenant: string;
+	let tenantPath: string;
+	let baseUrls: string[];
 
 	/**
 	 * Set after querying the IdP for oidc endpoints.
 	 */
-	private isOpConfigInitiated: boolean;
-	private authorizeEndpoint: string;
-	private tokenEndpoint: string;
-	private endSessionEndpoint: string;
-	private jwksUri: string;
-	private revokeTokenEndpoint: string;
-	private issuer: string;
+	let isOpConfigInitiated: boolean;
+	let authorizeEndpoint: string;
+	let tokenEndpoint: string;
+	let endSessionEndpoint: string;
+	let jwksUri: string;
+	let revokeTokenEndpoint: string;
+	let issuer: string;
 
-	private authorizationCode: string;
-	private pkceCodeVerifier: string;
+	let authorizationCode: string;
+	let pkceCodeVerifier: string;
 
 	/**
 	 * Set after successful authentication.
 	 */
-	private token: string;
-	private accessTokenExpiresIn: string;
-	private accessTokenIssuedAt: string;
-	private displayName: string;
-	private email: string;
-	private idToken: string;
-	private refreshToken: string;
-	private tokenType: string;
-	private userName: string;
-	private allowedScope: string;
-	
-	private httpClient: AxiosInstance;
+	let token: string;
+	let accessTokenExpiresIn: string;
+	let accessTokenIssuedAt: string;
+	let displayName: string;
+	let email: string;
+	let idToken: string;
+	let refreshToken: string;
+	let tokenType: string;
+	let userName: string;
+	let allowedScope: string;
 
-	private refreshTimer: number;
+	let httpClient: AxiosInstance;
 
-	/**
-	 * 
-	 * 
-	 * @param {ConfigInterface} config 
-	 */
-	constructor(config: ConfigInterface) {
-		this.authorizationType = config.authorizationType;
-		this.callbackURL = config.callbackURL;
-		this.clientHost = config.clientHost;
-		this.clientID = config.clientID;
-		this.clientSecret = config.clientSecret;
-		this.consentDenied = config.consentDenied;
-		this.enablePKCE = config.enablePKCE;
-		this.prompt = config.prompt;
-		this.responseMode = config.responseMode;
-		this.requestedScope = config.scope;
-		this.serverOrigin = config.serverOrigin;
-		this.tenant = config.tenant ?? "";
-		this.tenantPath = config.tenantPath;
-		this.baseUrls = config.baseUrls;
+	let refreshTimer: number;
 
-		this.httpClient = axios.create({
-			withCredentials: true,
-		});
+	let instance: OAuthWorkerInterface;
 
-		this.httpClient.interceptors.request.use(
-			(config) => {
-				config.headers = {
-					...config.headers,
-					Authorization: `Bearer ${this.token}`,
-				};
-
-				return config;
-			},
-			(error) => {
-				return Promise.reject(error);
-			}
-		);
-	}
-
-	public setIsOpConfigInitiated(status: boolean) {
-		this.isOpConfigInitiated = status;
-	}
-
-	public isSignedIn() {
-		return !!this.token;
-	}
-
-	public doesTokenExist() {
-		if (this.token) {
-			return true;
+	const sendRefreshTokenRequest = (): Promise<TokenResponseInterface> => {
+		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
+			return Promise.reject("Invalid token endpoint found.");
 		}
 
-		return false;
-	}
-
-	public setAuthorizationCode(authCode: string) {
-		this.authorizationCode = authCode;
-	}
-
-	public initOPConfiguration(forceInit?: boolean): Promise<any> {
-		if (!forceInit && this.isOpConfigInitiated) {
-			return Promise.resolve();
-		}
+		const body = [];
+		body.push(`client_id=${clientID}`);
+		body.push(`refresh_token=${refreshToken}`);
+		body.push("grant_type=refresh_token");
 
 		return axios
-			.get(this.serverOrigin + this.tenant + SERVICE_RESOURCES.wellKnown)
+			.post(tokenEndpoint, body.join("&"), { headers: getTokenRequestHeaders(clientHost) })
 			.then((response) => {
 				if (response.status !== 200) {
 					return Promise.reject(
-						new Error(
-							"Failed to load OpenID provider configuration from: " +
-								this.serverOrigin +
-								this.tenant +
-								SERVICE_RESOURCES.wellKnown
-						)
+						new Error("Invalid status code received in the refresh token response: " + response.status)
 					);
 				}
 
-				this.authorizeEndpoint = response.data.authorization_endpoint;
-				this.tokenEndpoint = response.data.token_endpoint;
-				this.endSessionEndpoint = response.data.end_session_endpoint;
-				this.jwksUri = response.data.jwks_uri;
-				this.revokeTokenEndpoint =
-					response.data.token_endpoint.substring(0, response.data.token_endpoint.lastIndexOf("token")) +
-					"revoke";
-				this.issuer = response.data.issuer;
-				this.setIsOpConfigInitiated(true);
+				return validateIdToken(clientID, response.data.id_token, serverOrigin).then((valid) => {
+					if (valid) {
+						const tokenResponse: TokenResponseInterface = {
+							accessToken: response.data.access_token,
+							expiresIn: response.data.expires_in,
+							idToken: response.data.id_token,
+							refreshToken: response.data.refresh_token,
+							scope: response.data.scope,
+							tokenType: response.data.token_type,
+						};
 
-				return Promise.resolve(
-					"Initialized OpenID Provider configuration from: " +
-						this.serverOrigin +
-						this.tenant +
-						SERVICE_RESOURCES.wellKnown
-				);
+						return Promise.resolve(tokenResponse);
+					}
+					return Promise.reject(
+						new Error("Invalid id_token in the token response: " + response.data.id_token)
+					);
+				});
 			})
-			.catch(() => {
-				this.authorizeEndpoint = this.serverOrigin + SERVICE_RESOURCES.authorize;
-				this.tokenEndpoint = this.serverOrigin + SERVICE_RESOURCES.token;
-				this.revokeTokenEndpoint = this.serverOrigin + SERVICE_RESOURCES.revoke;
-				this.endSessionEndpoint = this.serverOrigin + SERVICE_RESOURCES.logout;
-				this.jwksUri = this.serverOrigin + this.tenant + SERVICE_RESOURCES.jwks;
-				this.issuer = this.serverOrigin + SERVICE_RESOURCES.token;
-				this.tenant = this.tenant;
-				this.setIsOpConfigInitiated(true);
-
-				return Promise.resolve(
-					new Error(
-						"Initialized OpenID Provider configuration from default configuration." +
-							"Because failed to access wellknown endpoint: " +
-							this.serverOrigin +
-							this.tenant +
-							SERVICE_RESOURCES.wellKnown
-					)
-				);
+			.catch((error) => {
+				return Promise.reject(error.response);
 			});
-	}
+	};
 
-	private getTokenRequestHeaders(clientHost: string): TokenRequestHeader {
+	const sendRevokeTokenRequest = (): Promise<any> => {
+		if (!revokeTokenEndpoint || revokeTokenEndpoint.trim().length === 0) {
+			return Promise.reject("Invalid revoke token endpoint found.");
+		}
+
+		const body = [];
+		body.push(`client_id=${clientID}`);
+		body.push(`token=${token}`);
+		body.push("token_type_hint=access_token");
+
+		return axios
+			.post(revokeTokenEndpoint, body.join("&"), {
+				headers: getTokenRequestHeaders(clientHost),
+				withCredentials: true,
+			})
+			.then((response) => {
+				if (response.status !== 200) {
+					return Promise.reject(
+						new Error("Invalid status code received in the revoke token response: " + response.status)
+					);
+				}
+
+				destroyUserSession();
+				return Promise.resolve(response);
+			})
+			.catch((error) => {
+				return Promise.reject(error.response);
+			});
+	};
+
+	const sendAccountSwitchRequest = (requestParams: AccountSwitchRequestParams): Promise<TokenResponseInterface> => {
+		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
+			return Promise.reject(new Error("Invalid token endpoint found."));
+		}
+
+		let scope = OIDC_SCOPE;
+
+		if (requestedScope && requestedScope.length > 0) {
+			if (!requestedScope.includes(OIDC_SCOPE)) {
+				requestedScope.push(OIDC_SCOPE);
+			}
+			scope = requestedScope.join(" ");
+		}
+
+		const body = [];
+		body.push("grant_type=account_switch");
+		body.push(`username=${requestParams.username}`);
+		body.push(`userstore-domain=${requestParams["userstore-domain"]}`);
+		body.push(`tenant-domain=${requestParams["tenant-domain"]}`);
+		body.push(`token=${token}`);
+		body.push(`scope=${scope}`);
+		body.push(`client_id=${clientID}`);
+
+		return axios
+			.post(tokenEndpoint, body.join("&"), { headers: getTokenRequestHeaders(clientHost) })
+			.then((response) => {
+				if (response.status !== 200) {
+					return Promise.reject(
+						new Error("Invalid status code received in the token response: " + response.status)
+					);
+				}
+
+				return validateIdToken(clientID, response.data.id_token, serverOrigin).then((valid) => {
+					if (valid) {
+						const tokenResponse: TokenResponseInterface = {
+							accessToken: response.data.access_token,
+							expiresIn: response.data.expires_in,
+							idToken: response.data.id_token,
+							refreshToken: response.data.refresh_token,
+							scope: response.data.scope,
+							tokenType: response.data.token_type,
+						};
+						return Promise.resolve(tokenResponse);
+					}
+
+					return Promise.reject(
+						new Error("Invalid id_token in the token response: " + response.data.id_token)
+					);
+				});
+			})
+			.catch((error) => {
+				return Promise.reject(error);
+			});
+	};
+
+	const getTokenRequestHeaders = (clientHost: string): TokenRequestHeader => {
 		return {
 			Accept: "application/json",
 			"Access-Control-Allow-Origin": clientHost,
 			"Content-Type": "application/x-www-form-urlencoded",
 		};
-	}
+	};
 
-	public setPkceCodeVerifier(pkce: string) {
-		this.pkceCodeVerifier = pkce;
-	}
-
-	private validateIdToken(clientID: string, idToken: string, serverOrigin: string): Promise<any> {
-		const jwksEndpoint = this.jwksUri;
+	const validateIdToken = (clientID: string, idToken: string, serverOrigin: string): Promise<any> => {
+		const jwksEndpoint = jwksUri;
 
 		if (!jwksEndpoint || jwksEndpoint.trim().length === 0) {
 			return Promise.reject("Invalid JWKS URI found.");
@@ -237,62 +248,185 @@ class OAuthWorker {
 
 				const jwk = getJWKForTheIdToken(idToken.split(".")[0], response.data.keys);
 
-				let issuer = this.issuer;
-
 				if (!issuer || issuer.trim().length === 0) {
 					issuer = serverOrigin + SERVICE_RESOURCES.token;
 				}
 
-				const validity = isValidIdToken(
-					idToken,
-					jwk,
-					clientID,
-					issuer,
-					this.getAuthenticatedUser(idToken).username
-				);
+				const validity = isValidIdToken(idToken, jwk, clientID, issuer, getAuthenticatedUser(idToken).username);
 
 				return Promise.resolve(validity);
 			})
 			.catch((error) => {
 				return Promise.reject(error.response);
 			});
-	}
+	};
 
-	public sendTokenRequest(): Promise<TokenResponseInterface> {
-		const tokenEndpoint = this.tokenEndpoint;
+	const getAuthenticatedUser = (idToken: string): AuthenticatedUserInterface => {
+		const payload = JSON.parse(atob(idToken.split(".")[1]));
+		const emailAddress = payload.email ? payload.email : null;
 
+		return {
+			displayName: payload.preferred_username ? payload.preferred_username : payload.sub,
+			email: emailAddress,
+			username: payload.sub,
+		};
+	};
+
+	const initUserSession = (
+		tokenResponse: TokenResponseInterface,
+		authenticatedUser: AuthenticatedUserInterface
+	): void => {
+		token = tokenResponse.accessToken;
+		accessTokenExpiresIn = tokenResponse.expiresIn;
+		accessTokenIssuedAt = (Date.now() / 1000).toString();
+		displayName = authenticatedUser.displayName;
+		email = authenticatedUser.email;
+		idToken = tokenResponse.idToken;
+		allowedScope = tokenResponse.scope;
+		refreshToken = tokenResponse.refreshToken;
+		tokenType = tokenResponse.tokenType;
+		userName = authenticatedUser.username;
+
+		refreshTimer = setTimeout(() => {
+			refreshAccessToken()
+				.then((response) => {})
+				.catch((error) => {
+					console.error(error?.response);
+				});
+		}, (parseInt(accessTokenExpiresIn) - 10) * 1000);
+	};
+
+	const destroyUserSession = (): void => {
+		token = null;
+		accessTokenExpiresIn = null;
+		accessTokenIssuedAt = null;
+		displayName = null;
+		email = null;
+		idToken = null;
+		allowedScope = null;
+		refreshToken = null;
+		tokenType = null;
+		userName = null;
+
+		clearTimeout(refreshTimer);
+		refreshTimer = null;
+	};
+
+	const setIsOpConfigInitiated = (status: boolean) => {
+		isOpConfigInitiated = status;
+	};
+
+	const isSignedIn = () => {
+		return !!token;
+	};
+
+	const doesTokenExist = () => {
+		if (token) {
+			return true;
+		}
+
+		return false;
+	};
+
+	const setAuthorizationCode = (authCode: string) => {
+		authorizationCode = authCode;
+	};
+
+	const initOPConfiguration = (forceInit?: boolean): Promise<any> => {
+		if (!forceInit && isOpConfigInitiated) {
+			return Promise.resolve();
+		}
+
+		return axios
+			.get(serverOrigin + tenant + SERVICE_RESOURCES.wellKnown)
+			.then((response) => {
+				if (response.status !== 200) {
+					return Promise.reject(
+						new Error(
+							"Failed to load OpenID provider configuration from: " +
+								serverOrigin +
+								tenant +
+								SERVICE_RESOURCES.wellKnown
+						)
+					);
+				}
+
+				authorizeEndpoint = response.data.authorization_endpoint;
+				tokenEndpoint = response.data.token_endpoint;
+				endSessionEndpoint = response.data.end_session_endpoint;
+				jwksUri = response.data.jwks_uri;
+				revokeTokenEndpoint =
+					response.data.token_endpoint.substring(0, response.data.token_endpoint.lastIndexOf("token")) +
+					"revoke";
+				issuer = response.data.issuer;
+				setIsOpConfigInitiated(true);
+
+				return Promise.resolve(
+					"Initialized OpenID Provider configuration from: " +
+						serverOrigin +
+						tenant +
+						SERVICE_RESOURCES.wellKnown
+				);
+			})
+			.catch(() => {
+				authorizeEndpoint = serverOrigin + SERVICE_RESOURCES.authorize;
+				tokenEndpoint = serverOrigin + SERVICE_RESOURCES.token;
+				revokeTokenEndpoint = serverOrigin + SERVICE_RESOURCES.revoke;
+				endSessionEndpoint = serverOrigin + SERVICE_RESOURCES.logout;
+				jwksUri = serverOrigin + tenant + SERVICE_RESOURCES.jwks;
+				issuer = serverOrigin + SERVICE_RESOURCES.token;
+				tenant = tenant;
+				setIsOpConfigInitiated(true);
+
+				return Promise.resolve(
+					new Error(
+						"Initialized OpenID Provider configuration from default configuration." +
+							"Because failed to access wellknown endpoint: " +
+							serverOrigin +
+							tenant +
+							SERVICE_RESOURCES.wellKnown
+					)
+				);
+			});
+	};
+
+	const setPkceCodeVerifier = (pkce: string) => {
+		pkceCodeVerifier = pkce;
+	};
+
+	const sendTokenRequest = (): Promise<TokenResponseInterface> => {
 		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
 			return Promise.reject(new Error("Invalid token endpoint found."));
 		}
 
 		const body = [];
-		body.push(`client_id=${this.clientID}`);
+		body.push(`client_id=${clientID}`);
 
-		if (this.clientSecret && this.clientSecret.trim().length > 0) {
-			body.push(`client_secret=${this.clientSecret}`);
+		if (clientSecret && clientSecret.trim().length > 0) {
+			body.push(`client_secret=${clientSecret}`);
 		}
 
-		const code = this.authorizationCode;
-		this.authorizationCode = null;
+		const code = authorizationCode;
+		authorizationCode = null;
 		body.push(`code=${code}`);
 
 		body.push("grant_type=authorization_code");
-		body.push(`redirect_uri=${this.callbackURL}`);
+		body.push(`redirect_uri=${callbackURL}`);
 
-		if (this.enablePKCE) {
-			body.push(`code_verifier=${this.pkceCodeVerifier}`);
-			this.pkceCodeVerifier = null;
+		if (enablePKCE) {
+			body.push(`code_verifier=${pkceCodeVerifier}`);
+			pkceCodeVerifier = null;
 		}
 
 		return axios
-			.post(tokenEndpoint, body.join("&"), { headers: this.getTokenRequestHeaders(this.clientHost) })
+			.post(tokenEndpoint, body.join("&"), { headers: getTokenRequestHeaders(clientHost) })
 			.then((response) => {
 				if (response.status !== 200) {
 					return Promise.reject(
 						new Error("Invalid status code received in the token response: " + response.status)
 					);
 				}
-				return this.validateIdToken(this.clientID, response.data.id_token, this.serverOrigin).then((valid) => {
+				return validateIdToken(clientID, response.data.id_token, serverOrigin).then((valid) => {
 					if (valid) {
 						const tokenResponse: TokenResponseInterface = {
 							accessToken: response.data.access_token,
@@ -314,104 +448,51 @@ class OAuthWorker {
 			.catch((error) => {
 				return Promise.reject(error.response);
 			});
-	}
+	};
 
-	public getAuthenticatedUser(idToken: string): AuthenticatedUserInterface {
-		const payload = JSON.parse(atob(idToken.split(".")[1]));
-		const emailAddress = payload.email ? payload.email : null;
-
-		return {
-			displayName: payload.preferred_username ? payload.preferred_username : payload.sub,
-			email: emailAddress,
-			username: payload.sub,
-		};
-	}
-
-	public sendAuthorizationRequest = (): string => {
-		const authorizeEndpoint = this.authorizeEndpoint;
-
+	const sendAuthorizationRequest = (): string => {
 		if (!authorizeEndpoint || authorizeEndpoint.trim().length === 0) {
 			throw new Error("Invalid authorize endpoint found.");
 		}
 
-		let authorizeRequest = authorizeEndpoint + "?response_type=code&client_id=" + this.clientID;
+		let authorizeRequest = authorizeEndpoint + "?response_type=code&client_id=" + clientID;
 
 		let scope = OIDC_SCOPE;
 
-		if (this.requestedScope && this.requestedScope.length > 0) {
-			if (!this.requestedScope.includes(OIDC_SCOPE)) {
-				this.requestedScope.push(OIDC_SCOPE);
+		if (requestedScope && requestedScope.length > 0) {
+			if (!requestedScope.includes(OIDC_SCOPE)) {
+				requestedScope.push(OIDC_SCOPE);
 			}
-			scope = this.requestedScope.join(" ");
+			scope = requestedScope.join(" ");
 		}
 
 		authorizeRequest += "&scope=" + scope;
-		authorizeRequest += "&redirect_uri=" + this.callbackURL;
+		authorizeRequest += "&redirect_uri=" + callbackURL;
 
-		if (this.responseMode) {
-			authorizeRequest += "&response_mode=" + this.responseMode;
+		if (responseMode) {
+			authorizeRequest += "&response_mode=" + responseMode;
 		}
 
-		if (this.enablePKCE) {
+		if (enablePKCE) {
 			const codeVerifier = getCodeVerifier();
 			const codeChallenge = getCodeChallenge(codeVerifier);
-			this.pkceCodeVerifier = codeVerifier;
+			pkceCodeVerifier = codeVerifier;
 			authorizeRequest += "&code_challenge_method=S256&code_challenge=" + codeChallenge;
 		}
 
-		if (this.prompt) {
-			authorizeRequest += "&prompt=" + this.prompt;
+		if (prompt) {
+			authorizeRequest += "&prompt=" + prompt;
 		}
 
 		return authorizeRequest;
 	};
 
-	private initUserSession(
-		tokenResponse: TokenResponseInterface,
-		authenticatedUser: AuthenticatedUserInterface
-	): void {
-		this.token = tokenResponse.accessToken;
-		this.accessTokenExpiresIn = tokenResponse.expiresIn;
-		this.accessTokenIssuedAt = (Date.now() / 1000).toString();
-		this.displayName = authenticatedUser.displayName;
-		this.email = authenticatedUser.email;
-		this.idToken = tokenResponse.idToken;
-		this.allowedScope = tokenResponse.scope;
-		this.refreshToken = tokenResponse.refreshToken;
-		this.tokenType = tokenResponse.tokenType;
-		this.userName = authenticatedUser.username;
-
-		this.refreshTimer = setTimeout(() => {
-			this.refreshAccessToken()
-				.then((response) => {})
-				.catch((error) => {
-					console.error(error?.response);
-				});
-		}, (parseInt(this.accessTokenExpiresIn) - 10) * 1000);
-	}
-
-	private destroyUserSession(): void {
-		this.token = null;
-		this.accessTokenExpiresIn = null;
-		this.accessTokenIssuedAt = null;
-		this.displayName = null;
-		this.email = null;
-		this.idToken = null;
-		this.allowedScope = null;
-		this.refreshToken = null;
-		this.tokenType = null;
-		this.userName = null;
-
-		clearTimeout(this.refreshTimer);
-		this.refreshTimer = null;
-	}
-
-	public sendSignInRequest(): Promise<SignInResponse> {
-		if (this.authorizationCode) {
-			return this.sendTokenRequest()
+	const sendSignInRequest = (): Promise<SignInResponse> => {
+		if (authorizationCode) {
+			return sendTokenRequest()
 				.then((response: TokenResponseInterface) => {
 					try {
-						this.initUserSession(response, this.getAuthenticatedUser(response.idToken));
+						initUserSession(response, getAuthenticatedUser(response.idToken));
 					} catch (error) {
 						throw Error(error);
 					}
@@ -421,8 +502,8 @@ class OAuthWorker {
 					if (error.response && error.response.status === 400) {
 						return Promise.resolve({
 							type: AUTH_REQUIRED,
-							code: this.sendAuthorizationRequest(),
-							pkce: this.pkceCodeVerifier,
+							code: sendAuthorizationRequest(),
+							pkce: pkceCodeVerifier,
 						});
 					}
 
@@ -431,174 +512,41 @@ class OAuthWorker {
 		} else {
 			return Promise.resolve({
 				type: AUTH_REQUIRED,
-				code: this.sendAuthorizationRequest(),
-				pkce: this.pkceCodeVerifier,
+				code: sendAuthorizationRequest(),
+				pkce: pkceCodeVerifier,
 			});
 		}
-	}
+	};
 
-	private sendRefreshTokenRequest(): Promise<TokenResponseInterface> {
-		const tokenEndpoint = this.tokenEndpoint;
-
-		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
-			return Promise.reject("Invalid token endpoint found.");
-		}
-
-		const body = [];
-		body.push(`client_id=${this.clientID}`);
-		body.push(`refresh_token=${this.refreshToken}`);
-		body.push("grant_type=refresh_token");
-
-		return axios
-			.post(tokenEndpoint, body.join("&"), { headers: this.getTokenRequestHeaders(this.clientHost) })
-			.then((response) => {
-				if (response.status !== 200) {
-					return Promise.reject(
-						new Error("Invalid status code received in the refresh token response: " + response.status)
-					);
-				}
-
-				return this.validateIdToken(this.clientID, response.data.id_token, this.serverOrigin).then((valid) => {
-					if (valid) {
-						const tokenResponse: TokenResponseInterface = {
-							accessToken: response.data.access_token,
-							expiresIn: response.data.expires_in,
-							idToken: response.data.id_token,
-							refreshToken: response.data.refresh_token,
-							scope: response.data.scope,
-							tokenType: response.data.token_type,
-						};
-
-						return Promise.resolve(tokenResponse);
-					}
-					return Promise.reject(
-						new Error("Invalid id_token in the token response: " + response.data.id_token)
-					);
-				});
-			})
-			.catch((error) => {
-				return Promise.reject(error.response);
-			});
-	}
-
-	private sendRevokeTokenRequest(): Promise<any> {
-		const revokeTokenEndpoint = this.revokeTokenEndpoint;
-
-		if (!revokeTokenEndpoint || revokeTokenEndpoint.trim().length === 0) {
-			return Promise.reject("Invalid revoke token endpoint found.");
-		}
-
-		const body = [];
-		body.push(`client_id=${this.clientID}`);
-		body.push(`token=${this.token}`);
-		body.push("token_type_hint=access_token");
-
-		return axios
-			.post(revokeTokenEndpoint, body.join("&"), {
-				headers: this.getTokenRequestHeaders(this.clientHost),
-				withCredentials: true,
-			})
-			.then((response) => {
-				if (response.status !== 200) {
-					return Promise.reject(
-						new Error("Invalid status code received in the revoke token response: " + response.status)
-					);
-				}
-
-				this.destroyUserSession();
-				return Promise.resolve(response);
-			})
-			.catch((error) => {
-				return Promise.reject(error.response);
-			});
-	}
-
-	private sendAccountSwitchRequest(requestParams: AccountSwitchRequestParams): Promise<TokenResponseInterface> {
-		const tokenEndpoint = this.tokenEndpoint;
-
-		if (!tokenEndpoint || tokenEndpoint.trim().length === 0) {
-			return Promise.reject(new Error("Invalid token endpoint found."));
-		}
-
-		let scope = OIDC_SCOPE;
-
-		if (this.requestedScope && this.requestedScope.length > 0) {
-			if (!this.requestedScope.includes(OIDC_SCOPE)) {
-				this.requestedScope.push(OIDC_SCOPE);
-			}
-			scope = this.requestedScope.join(" ");
-		}
-
-		const body = [];
-		body.push("grant_type=account_switch");
-		body.push(`username=${requestParams.username}`);
-		body.push(`userstore-domain=${requestParams["userstore-domain"]}`);
-		body.push(`tenant-domain=${requestParams["tenant-domain"]}`);
-		body.push(`token=${this.token}`);
-		body.push(`scope=${scope}`);
-		body.push(`client_id=${this.clientID}`);
-
-		return axios
-			.post(tokenEndpoint, body.join("&"), { headers: this.getTokenRequestHeaders(this.clientHost) })
-			.then((response) => {
-				if (response.status !== 200) {
-					return Promise.reject(
-						new Error("Invalid status code received in the token response: " + response.status)
-					);
-				}
-
-				return this.validateIdToken(this.clientID, response.data.id_token, this.serverOrigin).then((valid) => {
-					if (valid) {
-						const tokenResponse: TokenResponseInterface = {
-							accessToken: response.data.access_token,
-							expiresIn: response.data.expires_in,
-							idToken: response.data.id_token,
-							refreshToken: response.data.refresh_token,
-							scope: response.data.scope,
-							tokenType: response.data.token_type,
-						};
-						return Promise.resolve(tokenResponse);
-					}
-
-					return Promise.reject(
-						new Error("Invalid id_token in the token response: " + response.data.id_token)
-					);
-				});
-			})
-			.catch((error) => {
-				return Promise.reject(error);
-			});
-	}
-
-	public refreshAccessToken(): Promise<boolean> {
+	const refreshAccessToken = (): Promise<boolean> => {
 		return new Promise((resolve, reject) => {
-			this.sendRefreshTokenRequest()
+			sendRefreshTokenRequest()
 				.then((response) => {
-					this.initUserSession(response, this.getAuthenticatedUser(response.idToken));
+					initUserSession(response, getAuthenticatedUser(response.idToken));
 					resolve(true);
 				})
 				.catch((error) => {
 					reject(error);
 				});
 		});
-	}
+	};
 
-	public switchAccount(requestParams: AccountSwitchRequestParams): Promise<boolean> {
+	const switchAccount = (requestParams: AccountSwitchRequestParams): Promise<boolean> => {
 		return new Promise((resolve, reject) => {
-			this.sendAccountSwitchRequest(requestParams)
+			sendAccountSwitchRequest(requestParams)
 				.then((response) => {
-					this.initUserSession(response, this.getAuthenticatedUser(response.idToken));
+					initUserSession(response, getAuthenticatedUser(response.idToken));
 					resolve(true);
 				})
 				.catch((error) => {
 					reject(error);
 				});
 		});
-	}
+	};
 
-	public logout(): Promise<boolean> {
+	const logout = (): Promise<boolean> => {
 		return new Promise((resolve, reject) => {
-			this.sendRevokeTokenRequest()
+			sendRevokeTokenRequest()
 				.then((response) => {
 					resolve(true);
 				})
@@ -606,29 +554,29 @@ class OAuthWorker {
 					reject(error);
 				});
 		});
-	}
+	};
 
-	public httpRequest(config: AxiosRequestConfig): Promise<AxiosResponse> {
+	const httpRequest = (config: AxiosRequestConfig): Promise<AxiosResponse> => {
 		let matches = false;
-		this.baseUrls.forEach((baseUrl) => {
+		baseUrls.forEach((baseUrl) => {
 			if (config.url.startsWith(baseUrl)) {
 				matches = true;
 			}
 		});
 
 		if (matches) {
-			return this.httpClient(config)
+			return httpClient(config)
 				.then((response: AxiosResponse) => {
 					return Promise.resolve(response);
 				})
 				.catch((error: AxiosError) => {
 					if (error?.response?.status === 401) {
-						clearTimeout(this.refreshTimer);
-						this.refreshTimer = null;
+						clearTimeout(refreshTimer);
+						refreshTimer = null;
 
-						return this.refreshAccessToken()
+						return refreshAccessToken()
 							.then((response) => {
-								return this.httpClient(config)
+								return httpClient(config)
 									.then((response) => {
 										return Promise.resolve(response);
 									})
@@ -645,10 +593,77 @@ class OAuthWorker {
 		} else {
 			return Promise.reject("The provided URL is illegal.");
 		}
-	}
-}
+	};
 
-let oAuthWorker: OAuthWorker;
+	/**
+	 *
+	 *
+	 * @param {ConfigInterface} config
+	 */
+	function Constructor(config: ConfigInterface): OAuthWorkerInterface {
+		authorizationType = config.authorizationType;
+		callbackURL = config.callbackURL;
+		clientHost = config.clientHost;
+		clientID = config.clientID;
+		clientSecret = config.clientSecret;
+		consentDenied = config.consentDenied;
+		enablePKCE = config.enablePKCE;
+		prompt = config.prompt;
+		responseMode = config.responseMode;
+		requestedScope = config.scope;
+		serverOrigin = config.serverOrigin;
+		tenant = config.tenant ?? "";
+		tenantPath = config.tenantPath;
+		baseUrls = config.baseUrls;
+
+		httpClient = axios.create({
+			withCredentials: true,
+		});
+
+		httpClient.interceptors.request.use(
+			(config) => {
+				config.headers = {
+					...config.headers,
+					Authorization: `Bearer ${token}`,
+				};
+
+				return config;
+			},
+			(error) => {
+				return Promise.reject(error);
+			}
+		);
+
+		return {
+			setIsOpConfigInitiated,
+			isSignedIn,
+			doesTokenExist,
+			setAuthorizationCode,
+			initOPConfiguration,
+			setPkceCodeVerifier,
+			sendTokenRequest,
+			sendAuthorizationRequest,
+			sendSignInRequest,
+			refreshAccessToken,
+			switchAccount,
+			logout,
+			httpRequest,
+		};
+	}
+
+	return {
+		getInstance: (config: ConfigInterface): OAuthWorkerInterface => {
+			if (instance) {
+				return instance;
+			} else {
+				instance = Constructor(config);
+				return instance;
+			}
+		},
+	};
+})();
+
+let oAuthWorker: OAuthWorkerInterface;
 
 onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: readonly MessagePort[] }) => {
 	const port = ports[0];
@@ -656,14 +671,16 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 	switch (data.type) {
 		case INIT:
 			try {
-				oAuthWorker = new OAuthWorker(data.data);
+				oAuthWorker = OAuthWorker.getInstance(data.data);
 				port.postMessage({ success: true });
 			} catch (error) {
 				port.postMessage({ success: false, error: error });
 			}
 			break;
 		case SIGN_IN:
-			if (oAuthWorker.doesTokenExist()) {
+			if (!oAuthWorker) {
+				port.postMessage({ success: false, error:"Worker has not been initiated." });
+			}else if (oAuthWorker.doesTokenExist()) {
 				port.postMessage({ success: true, data: { type: SIGNED_IN } });
 			} else {
 				oAuthWorker
@@ -691,6 +708,10 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 			}
 			break;
 		case AUTH_CODE:
+			if (!oAuthWorker) {
+				port.postMessage({ success: false, error: "Worker has not been initiated." });
+				break;
+			}
 			oAuthWorker.setAuthorizationCode(data.data.code);
 
 			if (data.data.pkce) {
@@ -720,6 +741,11 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 				});
 			break;
 		case API_CALL:
+			if (!oAuthWorker) {
+				port.postMessage({ success: false, error: "Worker has not been initiated." });
+				break;
+			}
+
 			if (!oAuthWorker.isSignedIn()) {
 				port.postMessage({ success: false, error: "You have not signed in yet." });
 			} else {
@@ -742,6 +768,11 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 			}
 			break;
 		case LOGOUT:
+			if (!oAuthWorker) {
+				port.postMessage({ success: false, error: "Worker has not been initiated." });
+				break;
+			}
+
 			if (!oAuthWorker.isSignedIn()) {
 				port.postMessage({ success: false, error: "You have not signed in yet." });
 			} else {
@@ -760,6 +791,11 @@ onmessage = ({ data, ports }: { data: { type: MessageType; data: any }; ports: r
 			}
 			break;
 		case SWITCH_ACCOUNTS:
+			if (!oAuthWorker) {
+				port.postMessage({ success: false, error: "Worker has not been initiated." });
+				break;
+			}
+
 			if (!oAuthWorker.isSignedIn()) {
 				port.postMessage({ success: false, error: "You have not signed in yet." });
 			} else {
