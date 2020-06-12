@@ -53,7 +53,7 @@ import { OAuthInterface, OAuthSingletonInterface } from "./models/oauth";
  * 			scope: ["SYSTEM", "openid"],
  * 		}).then(response=>{
  * 			console.log(response);
- * 
+ *
  *			oAuth.listenForAuthCode().then(response=>{
  * 				console.log(response);
  * 			}).catch(error=>{
@@ -158,7 +158,7 @@ export const OAuth: OAuthSingletonInterface = (function (): OAuthSingletonInterf
 
 	/**
 	 * This returns the object containing the public methods.
-	 * 
+	 *
 	 * @returns {OAuthInterface} OAuthInterface object
 	 */
 	function Constructor(): OAuthInterface {
@@ -430,7 +430,7 @@ export const OAuth: OAuthSingletonInterface = (function (): OAuthSingletonInterf
 	}
 
 	return {
-		getInstance: () => {
+		getInstance: (): OAuthInterface => {
 			if (instance) {
 				return instance;
 			} else {
