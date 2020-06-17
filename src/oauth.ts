@@ -16,15 +16,31 @@
  * under the License.
  */
 
-import { Message, ResponseMessage, SignInResponse, AuthCode } from "./models/message";
-// @ts-ignore
-import WorkerFile from "./oauth.worker.ts";
-import { ConfigInterface } from "./models/client";
-import { INIT, SIGN_IN, SIGNED_IN, AUTH_CODE, LOGOUT, SWITCH_ACCOUNTS, API_CALL, AUTH_REQUIRED } from "./constants";
-import { AUTHORIZATION_CODE, PKCE_CODE_VERIFIER } from "./constants/token";
-import { AccountSwitchRequestParams } from "./models";
 import { AxiosRequestConfig, AxiosResponse } from "axios";
-import { OAuthInterface, OAuthSingletonInterface } from "./models/oauth";
+import WorkerFile from "worker-loader!./oauth.worker.ts";
+import {
+	API_CALL,
+	AUTHORIZATION_CODE,
+	AUTH_CODE,
+	AUTH_REQUIRED,
+	CUSTOM_GRANT,
+	INIT,
+	LOGOUT,
+	PKCE_CODE_VERIFIER,
+	SIGNED_IN,
+	SIGN_IN
+} from "./constants";
+import {
+	AuthCode,
+	ConfigInterface,
+	CustomGrantRequestParams,
+	Message,
+	OAuthInterface,
+	OAuthSingletonInterface,
+	ResponseMessage,
+	SignInResponse,
+	UserInfo
+} from "./models";
 
 /**
  * This is a singleton class that allows authentication using the OAuth 2.0 protocol.
@@ -147,7 +163,7 @@ export const OAuth: OAuthSingletonInterface = (function (): OAuthSingletonInterf
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				reject("Operation timed out");
-			}, timeout ?? 5000);
+			}, timeout ?? 10000);
 
 			return (channel.port1.onmessage = ({ data }: { data: ResponseMessage<R> }) => {
 				clearTimeout(timer);
@@ -157,8 +173,288 @@ export const OAuth: OAuthSingletonInterface = (function (): OAuthSingletonInterf
 	};
 
 	/**
+	 * Allows using custom grant types.
+	 *
+	 * @param {CustomGrantRequestParams} requestParams Request Parameters.
+	 *
+	 * @returns {Promise<AxiosResponse|boolean>} A promise that resolves with a boolean value or the request
+	 * response if the the `returnResponse` attribute in the `requestParams` object is set to `true`.
+	 */
+	const customGrant = (
+		requestParams: CustomGrantRequestParams
+	): Promise<typeof requestParams["returnResponse"] extends true ? AxiosResponse : boolean> => {
+		if (!initialized) {
+			return Promise.reject("The object has not been initialized yet");
+		}
+
+		if (!signedIn && requestParams.signInRequired) {
+			return Promise.reject("You have not signed in yet");
+		}
+
+		const message: Message<CustomGrantRequestParams> = {
+			data: requestParams,
+			type: CUSTOM_GRANT
+		};
+		return communicate<
+			CustomGrantRequestParams,
+			typeof requestParams["returnResponse"] extends true ? AxiosResponse : boolean
+		>(message)
+			.then((response) => {
+				return Promise.resolve(response);
+			})
+			.catch((error) => {
+				return Promise.reject(error);
+			});
+	};
+
+	/**
+	 *
+	 * Send the API request to the web worker and returns the response.
+	 *
+	 * @param {AxiosRequestConfig} config The Axios Request Config object
+	 *
+	 * @returns {Promise<AxiosResponse>} A promise that resolves with the response data.
+	 */
+	const httpRequest = (config: AxiosRequestConfig): Promise<AxiosResponse> => {
+		if (!initialized) {
+			return Promise.reject("The object has not been initialized yet ");
+		}
+
+		if (!signedIn) {
+			return Promise.reject("You have not signed in yet");
+		}
+
+		const message: Message<AxiosRequestConfig> = {
+			data: config,
+			type: API_CALL
+		};
+		return communicate<AxiosRequestConfig, AxiosResponse>(message)
+			.then((response) => {
+				return Promise.resolve(response);
+			})
+			.catch((error) => {
+				return Promise.reject(error);
+			});
+	};
+
+	/**
+	 * Initializes the object with authentication parameters.
+	 *
+	 * @param {ConfigInterface} config The configuration object.
+	 *
+	 * @returns {Promise<boolean>} Promise that resolves when initialization is successful.
+	 *
+	 * The `config` object has the following attributes:
+	 * ```
+	 * 	var config = {
+	 * 		authorizationType?: string //optional
+	 * 		clientHost: string
+	 * 		clientID: string
+	 *    	clientSecret?: string //optional
+	 * 		consentDenied?: boolean //optional
+	 * 		enablePKCE?: boolean //optional
+	 *		prompt?: string //optional
+	 *		responseMode?: "query" | "form-post" //optional
+	 *		scope?: string[] //optional
+	 *		serverOrigin: string
+	 *		tenant?: string //optional
+	 *		tenantPath?: string //optional
+	 *		baseUrls: string[]
+	 *		callbackURL: string
+	 *	}
+	 * ```
+	 */
+	const initialize = (config: ConfigInterface) => {
+		if (config.authorizationType && typeof config.authorizationType !== "string") {
+			return Promise.reject("The authorizationType must be a string");
+		}
+
+		if (!(config.baseUrls instanceof Array)) {
+			return Promise.reject("baseUrls must be an array");
+		}
+
+		if (config.baseUrls.find((baseUrl) => typeof baseUrl !== "string")) {
+			return Promise.reject("Array elements of baseUrls must all be string values");
+		}
+
+		if (typeof config.callbackURL !== "string") {
+			return Promise.reject("The callbackURL must be a string");
+		}
+
+		if (typeof config.clientHost !== "string") {
+			return Promise.reject("The clientHost must be a string");
+		}
+
+		if (typeof config.clientID !== "string") {
+			return Promise.reject("The clientID must be a string");
+		}
+
+		if (config.clientSecret && typeof config.clientSecret !== "string") {
+			return Promise.reject("The clientString must be a string");
+		}
+
+		if (config.consentDenied && typeof config.consentDenied !== "boolean") {
+			return Promise.reject("consentDenied must be a boolean");
+		}
+
+		if (config.enablePKCE && typeof config.enablePKCE !== "boolean") {
+			return Promise.reject("enablePKCE must be a boolean");
+		}
+
+		if (config.prompt && typeof config.prompt !== "string") {
+			return Promise.reject("The prompt must be a string");
+		}
+
+		if (config.responseMode && typeof config.responseMode !== "string") {
+			return Promise.reject("The responseMode must be a string");
+		}
+
+		if (config.responseMode && config.responseMode !== "form_post" && config.responseMode !== "query") {
+			return Promise.reject("The responseMode is invalid");
+		}
+
+		if (config.scope && !(config.scope instanceof Array)) {
+			return Promise.reject("scope must be an array");
+		}
+
+		if (config.scope && config.scope.find((aScope) => typeof aScope !== "string")) {
+			return Promise.reject("Array elements of scope must all be string values");
+		}
+
+		if (typeof config.serverOrigin !== "string") {
+			return Promise.reject("serverOrigin must be a string");
+		}
+
+		const message: Message<ConfigInterface> = {
+			data: config,
+			type: INIT
+		};
+		return communicate<ConfigInterface, null>(message)
+			.then(() => {
+				initialized = true;
+				return Promise.resolve(true);
+			})
+			.catch((error) => {
+				return Promise.reject(error);
+			});
+	};
+
+	/**
+	 * Sends the authorization code and authenticates the user.
+	 *
+	 * @returns {Promise<UserInfo>} Promise that resolves on successful authentication.
+	 */
+	const sendAuthorizationCode = (): Promise<UserInfo> => {
+		const authCode = getAuthorizationCode();
+		const message: Message<AuthCode> = {
+			data: {
+				code: authCode,
+				pkce: sessionStorage.getItem(PKCE_CODE_VERIFIER)
+			},
+			type: AUTH_CODE
+		};
+		history.pushState({}, document.title, removeAuthorizationCode());
+		sessionStorage.removeItem(PKCE_CODE_VERIFIER);
+		return communicate<AuthCode, SignInResponse>(message)
+			.then((response) => {
+				if (response.type === SIGNED_IN) {
+					signedIn = true;
+					return Promise.resolve(response.data);
+				}
+
+				return Promise.reject(
+					"Something went wrong during authentication. " +
+						"Failed during signing in after getting the authorization code."
+				);
+			})
+			.catch((error) => {
+				return Promise.reject(error);
+			});
+	};
+
+	/**
+	 * Listens for the authorization code in the callback URL.
+	 * If present, this will continue with the authentication flow and resolve if successfully authenticated.
+	 * @returns {Promise<UserInfo>} Promise that resolves on successful authentication.
+	 */
+	const listenForAuthCode = (): Promise<UserInfo> => {
+		if (!initialized) {
+			return Promise.reject(
+				"Error while listening to authorization code. The object has not been initialized yet."
+			);
+		}
+
+		if (hasAuthorizationCode()) {
+			return sendAuthorizationCode();
+		} else {
+			return Promise.reject("No Authorization Code found.");
+		}
+	};
+
+	/**
+	 * Initiates the authentication flow.
+	 *
+	 * @returns {Promise<UserInfo>} A promise that resolves when authentication is successful.
+	 */
+	const signIn = (): Promise<UserInfo> => {
+		if (initialized) {
+			if (hasAuthorizationCode()) {
+				return sendAuthorizationCode();
+			} else {
+				const message: Message<null> = {
+					data: null,
+					type: SIGN_IN
+				};
+				return communicate<null, SignInResponse>(message)
+					.then((response) => {
+						if (response.type === SIGNED_IN) {
+							signedIn = true;
+							return Promise.resolve(response.data);
+						} else if (response.type === AUTH_REQUIRED && response.code) {
+							if (response.pkce) {
+								sessionStorage.setItem(PKCE_CODE_VERIFIER, response.pkce);
+							}
+
+							location.href = response.code;
+						} else {
+							return Promise.reject("Something went wrong during authentication");
+						}
+					})
+					.catch((error) => {
+						return Promise.reject(error);
+					});
+			}
+		} else {
+			return Promise.reject("Error while signing in. The object has not been initialized yet.");
+		}
+	};
+
+	/**
+	 * Initiates the sign out flow.
+	 *
+	 * @returns {Promise<boolean>} A promise that resolves when sign out is completed.
+	 */
+	const signOut = (): Promise<boolean> => {
+		if (!signedIn) {
+			return Promise.reject("You have not signed in yet");
+		}
+
+		const message: Message<null> = {
+			type: LOGOUT
+		};
+		return communicate<null, boolean>(message)
+			.then((response) => {
+				signedIn = false;
+				return Promise.resolve(response);
+			})
+			.catch((error) => {
+				return Promise.reject(error);
+			});
+	};
+
+	/**
 	 * @constructor
-	 * 
+	 *
 	 * This returns the object containing the public methods.
 	 *
 	 * @returns {OAuthInterface} OAuthInterface object
@@ -167,267 +463,12 @@ export const OAuth: OAuthSingletonInterface = (function (): OAuthSingletonInterf
 		worker = new WorkerFile();
 
 		return {
-			/**
-			 * Listens for the authorization code in the callback URL.
-			 * If present, this will continue with the authentication flow and resolve if successfully authenticated.
-			 * @returns {Promise<boolean>} Promise that resolves on successful authentication.
-			 */
-			listenForAuthCode: (): Promise<boolean> => {
-				if (!initialized) {
-					return Promise.reject(
-						"Error while listening to authorization code. The object has not been initialized yet."
-					);
-				}
-				if (hasAuthorizationCode()) {
-					const authCode = getAuthorizationCode();
-					const message: Message<AuthCode> = {
-						type: AUTH_CODE,
-						data: {
-							code: authCode,
-							pkce: sessionStorage.getItem(PKCE_CODE_VERIFIER),
-						},
-					};
-
-					history.pushState({}, document.title, removeAuthorizationCode());
-
-					sessionStorage.removeItem(PKCE_CODE_VERIFIER);
-
-					return communicate<AuthCode, SignInResponse>(message)
-						.then((response) => {
-							if (response.type === SIGNED_IN) {
-								signedIn = true;
-								return Promise.resolve(true);
-							}
-
-							return Promise.reject(
-								"Something went wrong during authentication. " +
-									"Failed during signing in after getting the authorization code."
-							);
-						})
-						.catch((error) => {
-							return Promise.reject(error);
-						});
-				} else {
-					return Promise.reject("No Authorization Code found.");
-				}
-			},
-
-			/**
-			 * Initializes the object with authentication parameters.
-			 *
-			 * @param {ConfigInterface} config The configuration object.
-			 *
-			 * @returns {Promise<boolean>} Promise that resolves when initialization is successful.
-			 *
-			 * The `config` object has the following attributes:
-			 * ```
-			 * 	var config = {
-			 * 		authorizationType?: string //optional
-			 * 		clientHost: string
-			 * 		clientID: string
-			 *  	clientSecret?: string //optional
-			 * 		consentDenied?: boolean //optional
-			 * 		enablePKCE?: boolean //optional
-			 *		prompt?: string //optional
-			 *		responseMode?: "query" | "form-post" //optional
-			 *		scope?: string[] //optional
-			 *		serverOrigin: string
-			 *		tenant?: string //optional
-			 *		tenantPath?: string //optional
-			 *		baseUrls: string[]
-			 *		callbackURL: string
-			 *	}
-			 * ```
-			 */
-			initialize: (config: ConfigInterface) => {
-				if (config.authorizationType && typeof config.authorizationType !== "string") {
-					return Promise.reject("The authorizationType must be a string");
-				}
-				if (!(config.baseUrls instanceof Array)) {
-					return Promise.reject("baseUrls must be an array");
-				}
-				if (config.baseUrls.find((baseUrl) => typeof baseUrl !== "string")) {
-					return Promise.reject("Array elements of baseUrls must all be string values");
-				}
-				if (typeof config.callbackURL !== "string") {
-					return Promise.reject("The callbackURL must be a string");
-				}
-				if (typeof config.clientHost !== "string") {
-					return Promise.reject("The clientHost must be a string");
-				}
-				if (typeof config.clientID !== "string") {
-					return Promise.reject("The clientID must be a string");
-				}
-				if (config.clientSecret && typeof config.clientSecret !== "string") {
-					return Promise.reject("The clientString must be a string");
-				}
-				if (config.consentDenied && typeof config.consentDenied !== "boolean") {
-					return Promise.reject("consentDenied must be a boolean");
-				}
-				if (config.enablePKCE && typeof config.enablePKCE !== "boolean") {
-					return Promise.reject("enablePKCE must be a boolean");
-				}
-				if (config.prompt && typeof config.prompt !== "string") {
-					return Promise.reject("The prompt must be a string");
-				}
-				if (config.responseMode && typeof config.responseMode !== "string") {
-					return Promise.reject("The responseMode must be a string");
-				}
-				if (config.responseMode && config.responseMode !== "form_post" && config.responseMode !== "query") {
-					return Promise.reject("The responseMode is invalid");
-				}
-				if (config.scope && !(config.scope instanceof Array)) {
-					return Promise.reject("scope must be an array");
-				}
-				if (config.scope && config.scope.find((aScope) => typeof aScope !== "string")) {
-					return Promise.reject("Array elements of scope must all be string values");
-				}
-				if (typeof config.serverOrigin !== "string") {
-					return Promise.reject("serverOrigin must be a string");
-				}
-				if (config.tenant && typeof config.tenant !== "string") {
-					return Promise.reject("The tenant must be a string");
-				}
-				if (config.tenantPath && typeof config.tenantPath !== "string") {
-					return Promise.reject("The tenantPath must be a string");
-				}
-
-				const message: Message<ConfigInterface> = {
-					type: INIT,
-					data: config,
-				};
-
-				return communicate<ConfigInterface, null>(message)
-					.then((response) => {
-						initialized = true;
-						return Promise.resolve(true);
-					})
-					.catch((error) => {
-						return Promise.reject(error);
-					});
-			},
-
-			/**
-			 * Initiates the authentication flow.
-			 *
-			 * @returns {Promise<boolean>} A promise that resolves when authentication is successful.
-			 */
-			signIn: (): Promise<boolean> => {
-				if (initialized) {
-					const message: Message<null> = {
-						type: SIGN_IN,
-						data: null,
-					};
-
-					return communicate<null, SignInResponse>(message)
-						.then((response) => {
-							if (response.type === SIGNED_IN) {
-								signedIn = true;
-								return Promise.resolve(true);
-							} else if (response.type === AUTH_REQUIRED && response.code) {
-								if (response.pkce) {
-									sessionStorage.setItem(PKCE_CODE_VERIFIER, response.pkce);
-								}
-
-								location.href = response.code;
-							} else {
-								return Promise.reject("Something went wrong during authentication");
-							}
-						})
-						.catch((error) => {
-							return Promise.reject(error);
-						});
-				} else {
-					return Promise.reject("Error while signing in. The object has not been initialized yet.");
-				}
-			},
-
-			/**
-			 * Initiates the sign out flow.
-			 *
-			 * @returns {Promise<boolean>} A promise that resolves when sign out is completed.
-			 */
-			signOut: (): Promise<boolean> => {
-				if (!signedIn) {
-					return Promise.reject("You have not signed in yet");
-				}
-				const message: Message<null> = {
-					type: LOGOUT,
-				};
-
-				return communicate<null, boolean>(message)
-					.then((response) => {
-						signedIn = false;
-						return Promise.resolve(response);
-					})
-					.catch((error) => {
-						return Promise.reject(error);
-					});
-			},
-
-			/**
-			 * Switches accounts.
-			 *
-			 * @param {AccountSwitchRequestParams} requestParams Request parameters.
-			 *
-			 * @returns {Promise<boolean>} A promise that resolves when account switching is successful.
-			 *
-			 * `requestParams` has the following attributes:
-			 *  - username: `string`
-			 *	- "userstore-domain": `string`
-			 *	- "tenant-domain": `string`
-			 *
-			 */
-			switchAccounts: (requestParams: AccountSwitchRequestParams): Promise<boolean> => {
-				if (!initialized) {
-					return Promise.reject("The object has not been initialized yet");
-				}
-
-				if (!signedIn) {
-					return Promise.reject("You have not signed in yet");
-				}
-
-				const message: Message<AccountSwitchRequestParams> = {
-					type: SWITCH_ACCOUNTS,
-					data: requestParams,
-				};
-
-				return communicate<AccountSwitchRequestParams, boolean>(message)
-					.then((response) => {
-						return Promise.resolve(response);
-					})
-					.catch((error) => {
-						return Promise.reject(error);
-					});
-			},
-
-			/**
-			 *
-			 * Send the API request to the web worker and returns the response.
-			 *
-			 * @param {AxiosRequestConfig} config The Axios Request Config object
-			 *
-			 * @returns {Promise<AxiosResponse>} A promise that resolves with the response data.
-			 */
-			httpRequest: (config: AxiosRequestConfig): Promise<AxiosResponse> => {
-				if (!initialized) {
-					return Promise.reject("The object has not been initialized yet ");
-				}
-				if (!signedIn) {
-					return Promise.reject("You have not signed in yet");
-				}
-				const message: Message<AxiosRequestConfig> = {
-					type: API_CALL,
-					data: config,
-				};
-				return communicate<AxiosRequestConfig, AxiosResponse>(message)
-					.then((response) => {
-						return Promise.resolve(response);
-					})
-					.catch((error) => {
-						return Promise.reject(error);
-					});
-			},
+			customGrant,
+			httpRequest,
+			initialize,
+			listenForAuthCode,
+			signIn,
+			signOut
 		};
 	}
 
@@ -439,6 +480,6 @@ export const OAuth: OAuthSingletonInterface = (function (): OAuthSingletonInterf
 				instance = Constructor();
 				return instance;
 			}
-		},
+		}
 	};
 })();

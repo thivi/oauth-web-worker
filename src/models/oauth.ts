@@ -17,18 +17,26 @@
  */
 
 import { AxiosRequestConfig, AxiosResponse } from "axios";
-import { AccountSwitchRequestParams } from "./oidc-request-params";
 import { ConfigInterface } from ".";
+import { UserInfo } from "./message";
 
 export interface OAuthInterface {
 	httpRequest(config: AxiosRequestConfig): Promise<AxiosResponse>;
-	switchAccounts(requestParams: AccountSwitchRequestParams): Promise<boolean>;
 	signOut(): Promise<boolean>;
-	signIn(): Promise<boolean>;
+	signIn(): Promise<UserInfo>;
 	initialize(config: ConfigInterface): Promise<boolean>;
-	listenForAuthCode(): Promise<boolean>;
+	listenForAuthCode(): Promise<UserInfo>;
+	customGrant(requestParams: CustomGrantRequestParams): Promise<AxiosResponse | boolean>;
 }
 
 export interface OAuthSingletonInterface {
 	getInstance(): OAuthInterface;
+}
+
+export interface CustomGrantRequestParams {
+	data: any;
+	signInRequired: boolean;
+	attachToken: boolean;
+	returnsSession: boolean;
+	returnResponse: boolean;
 }

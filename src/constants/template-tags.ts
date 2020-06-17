@@ -16,11 +16,8 @@
  * under the License.
  */
 
-export const INIT = "init";
-export const SIGN_IN = "sign-in";
-export const SIGNED_IN = "signed-in";
-export const AUTH_REQUIRED = "auth-required";
-export const AUTH_CODE = "auth-code";
-export const LOGOUT = "logout";
-export const API_CALL = "api-call";
-export const CUSTOM_GRANT = "custom-grant";
+export const TOKEN_TAG = "{{token}}";
+export const USERNAME_TAG = "{{username}}";
+export const SCOPE_TAG = "{{scope}}";
+export const CLIENT_ID_TAG = "{{clientId}}";
+export const CLIENT_SECRET_TAG = "{{clientSecret}}";

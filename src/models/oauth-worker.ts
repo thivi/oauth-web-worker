@@ -16,10 +16,10 @@
  * under the License.
  */
 
-import { SignInResponse } from "./message";
-import { AccountSwitchRequestParams } from ".";
 import { AxiosRequestConfig, AxiosResponse } from "axios";
 import { ConfigInterface } from "./client";
+import { SignInResponse, UserInfo } from "./message";
+import { CustomGrantRequestParams } from "./oauth";
 
 export interface OAuthWorkerInterface {
 	setIsOpConfigInitiated(status: boolean): void;
@@ -31,9 +31,10 @@ export interface OAuthWorkerInterface {
 	generateAuthorizationCodeRequestURL(): string;
 	sendSignInRequest(): Promise<SignInResponse>;
 	refreshAccessToken(): Promise<boolean>;
-	switchAccount(requestParams: AccountSwitchRequestParams): Promise<boolean>;
 	signOut(): Promise<boolean>;
 	httpRequest(config: AxiosRequestConfig): Promise<AxiosResponse>;
+	customGrant(requestParams: CustomGrantRequestParams): Promise<AxiosResponse | boolean>;
+	getUserInfo(): UserInfo;
 }
 
 export interface OAuthWorkerSingletonInterface {
